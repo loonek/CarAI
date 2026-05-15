@@ -1,0 +1,27 @@
+[gd_scene format=3 uid="uid://3dch1up88yqq"]
+
+[ext_resource type="Script" uid="uid://cok3moca5ssm0" path="res://car.gd" id="1_7822p"]
+
+[sub_resource type="ImageTexture" id="ImageTexture_7822p"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_24jkt"]
+size = Vector2(64, 32)
+
+[node name="Car" type="CharacterBody2D" unique_id=1252165271]
+rotation = 3.1415927
+script = ExtResource("1_7822p")
+
+[node name="Polygon2D" type="Polygon2D" parent="." unique_id=382385281]
+position = Vector2(-63.931602, -35.590878)
+scale = Vector2(0.9957251, 1.0641227)
+color = Color(0.48484987, 0.00017307818, 0.48750675, 1)
+texture = SubResource("ImageTexture_7822p")
+polygon = PackedVector2Array(32.06869, 48.48208, 96.34346, 48.482075, 96.34346, 18.410355, 32.06869, 18.410358)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=355249894]
+shape = SubResource("RectangleShape2D_24jkt")
+debug_color = Color(0.4477486, 0.4846471, 0.9086638, 0.41960785)
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=996000431]
+position = Vector2(-16, 1.3987644e-06)
+zoom = Vector2(1.5, 1.5)
