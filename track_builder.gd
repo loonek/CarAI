@@ -4,10 +4,20 @@ enum AppState { DRAWING, DRIVING, AI_NEW, AI_IMPROVE }
 var current_state: AppState = AppState.DRAWING
 
 @onready var ui_menu = $UI/MenuPanel
-@onready var btn_draw = $UI/MenuPanel/VBoxContainer/BtnDraw
-@onready var btn_drive = $UI/MenuPanel/VBoxContainer/BtnDrive
-@onready var btn_ai_new = $UI/MenuPanel/VBoxContainer/BtnAINew
-@onready var btn_ai_improve = $UI/MenuPanel/VBoxContainer/BtnAIImprove
+@onready var main_vbox = $UI/MenuPanel/MainVBox
+@onready var circuit_vbox = $UI/MenuPanel/CircuitVBox
+
+# Main Menu Buttons
+@onready var btn_circuit = $UI/MenuPanel/MainVBox/BtnCircuit
+@onready var btn_drive = $UI/MenuPanel/MainVBox/BtnDrive
+@onready var btn_ai_new = $UI/MenuPanel/MainVBox/BtnAINew
+@onready var btn_ai_improve = $UI/MenuPanel/MainVBox/BtnAIImprove
+
+# Circuit Submenu Buttons
+@onready var btn_draw_new = $UI/MenuPanel/CircuitVBox/BtnDrawNew
+@onready var btn_save = $UI/MenuPanel/CircuitVBox/BtnSave
+@onready var btn_load = $UI/MenuPanel/CircuitVBox/BtnLoad
+@onready var btn_back = $UI/MenuPanel/CircuitVBox/BtnBack
 
 @onready var track_line = $TrackLine
 @onready var kerb_line = $KerbLine
@@ -63,12 +73,19 @@ func _ready():
 			line.antialiased = true
 			line.closed = true
 			
-	# Hide the menu by default and connect buttons
+	# Hide the menu by default
 	ui_menu.hide()
-	btn_draw.pressed.connect(_on_btn_draw_pressed)
+	# Connect main menu buttons
+	btn_circuit.pressed.connect(_on_btn_circuit_pressed)
 	btn_drive.pressed.connect(_on_btn_drive_pressed)
 	btn_ai_new.pressed.connect(_on_btn_ai_new_pressed)
 	btn_ai_improve.pressed.connect(_on_btn_ai_improve_pressed)
+	
+	# Connect circuit submenu buttons
+	btn_draw_new.pressed.connect(_on_btn_draw_new_pressed)
+	btn_save.pressed.connect(_on_btn_save_pressed)
+	btn_load.pressed.connect(_on_btn_load_pressed)
+	btn_back.pressed.connect(_on_btn_back_pressed)
 	
 	# Generate the kerb line texture
 	kerb_line.default_color = Color.WHITE
@@ -80,6 +97,9 @@ func _ready():
 
 func _process(delta):
 	if Input.is_action_just_pressed("ui_cancel"): # Escape
+		if not ui_menu.visible:
+			circuit_vbox.hide()
+			main_vbox.show()
 		ui_menu.visible = !ui_menu.visible
 		
 	# Update the lap timer string if a valid lap is currently underway
@@ -380,7 +400,6 @@ func finish_sector(checkpoint_index: int):
 	# Update delta
 	if is_lap_valid:
 		var pb = personal_best_sectors[sector_index]
-		var ob = overall_best_sectors[sector_index]
 		
 		if pb == INF:
 			# First valid lap
@@ -551,7 +570,17 @@ func frame_camera():
 	
 	cam.zoom = Vector2(min_zoom, min_zoom)
 
-func _on_btn_draw_pressed():
+func _on_btn_circuit_pressed():
+	# Swap to circuit submenu
+	main_vbox.hide()
+	circuit_vbox.show()
+
+func _on_btn_back_pressed():
+	# Swap back to main menu
+	circuit_vbox.hide()
+	main_vbox.show()
+
+func _on_btn_draw_new_pressed():
 	current_state = AppState.DRAWING
 	ui_menu.hide()
 	telemetry_layer.hide()
@@ -561,6 +590,12 @@ func _on_btn_draw_pressed():
 		active_car = null
 	
 	print("Mode: Drawing")
+
+func _on_btn_save_pressed():
+	print("kawabanga")
+
+func _on_btn_load_pressed():
+	print("bazinga")
 
 func _on_btn_drive_pressed():
 	current_state = AppState.DRIVING

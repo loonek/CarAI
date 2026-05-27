@@ -3,7 +3,7 @@ extends CharacterBody2D
 signal lap_invalidated						## Emitted when all 4 wheels of the car cross the track boundary
 
 var engine_power: float = 900.0				## Engine's force applied during acceleration
-var brake_power: float = -600.0				## Braking power
+var brake_power: float = -500.0				## Braking power
 var reverse_max_speed: float = 250.0		## Limits the car speed when going in reverse
 	
 var wheel_base: float = 40.0				## Distance between front and back wheels
@@ -92,7 +92,7 @@ func get_input():
 
 func apply_friction(delta: float):
 	# Stop at low speed to prevent endless slide
-	if acceleration == Vector2.ZERO and velocity.length() < 50:
+	if acceleration == Vector2.ZERO and velocity.length() < 15:
 		velocity = Vector2.ZERO
 	
 	# Calculate relevant values based on velocity
