@@ -80,7 +80,7 @@ theme_override_font_sizes/font_size = 25
 theme_override_styles/normal = SubResource("StyleBoxFlat_5ubph")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_kl48d")
 theme_override_styles/hover = SubResource("StyleBoxFlat_k10l3")
-text = "Paint Circuit"
+text = "Cricuit Creation"
 icon_alignment = 1
 vertical_icon_alignment = 2
 

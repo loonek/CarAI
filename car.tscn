@@ -25,4 +25,7 @@ debug_color = Color(0.4477486, 0.4846471, 0.9086638, 0.41960785)
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=996000431]
 position = Vector2(-16, 1.3987644e-06)
+rotation = 1.5707964
+ignore_rotation = false
 zoom = Vector2(1.5, 1.5)
+rotation_smoothing_enabled = true
