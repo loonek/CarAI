@@ -374,12 +374,34 @@ func start_lap():
 ## Records the sector time and advances the target checkpoint
 func finish_sector(checkpoint_index: int):
 	var sector_index = checkpoint_index - 1 
-	
-	# Calculate how long the car inside this sector
+	# Calculate how long the car is  inside this sector
 	var sector_time = lap_timer - current_sector_start_time
-	record_sector(sector_index, sector_time)
+	
+	# Update delta
+	if is_lap_valid:
+		var pb = personal_best_sectors[sector_index]
+		var ob = overall_best_sectors[sector_index]
+		
+		if pb == INF:
+			# First valid lap
+			lbl_delta.text = "Delta: 00:00.000"
+			lbl_delta.add_theme_color_override("font_color", Color(0.8, 0.3, 1.0)) # Purple
+		else:
+			var diff = sector_time - pb
+			var diff_str = format_time(abs(diff))
+			
+			if sector_time <= pb:
+				lbl_delta.text = "Delta: -" + diff_str
+				lbl_delta.add_theme_color_override("font_color", Color.GREEN) # Green (Personal Best)
+			else:
+				lbl_delta.text = "Delta: +" + diff_str
+				lbl_delta.add_theme_color_override("font_color", Color.YELLOW) # Yellow (Slower)
+	else:
+		lbl_delta.text = "Delta: INVALID"
+		lbl_delta.add_theme_color_override("font_color", Color.RED)
 	
 	# Update tracker variables for the next sector
+	record_sector(sector_index, sector_time)
 	current_sector_start_time = lap_timer
 	current_target_checkpoint = (checkpoint_index + 1) % 3
 
