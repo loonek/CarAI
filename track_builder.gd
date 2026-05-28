@@ -5,7 +5,7 @@ var current_state: AppState = AppState.DRAWING
 
 @onready var ui_menu = $UI/MenuPanel
 @onready var main_vbox = $UI/MenuPanel/MainVBox
-@onready var circuit_vbox = $UI/MenuPanel/CircuitVBox
+@onready var circuit_vbox = $UI/MenuPanel/CircuitHBox
 
 # Main Menu Buttons
 @onready var btn_circuit = $UI/MenuPanel/MainVBox/BtnCircuit
@@ -14,10 +14,16 @@ var current_state: AppState = AppState.DRAWING
 @onready var btn_ai_improve = $UI/MenuPanel/MainVBox/BtnAIImprove
 
 # Circuit Submenu Buttons
-@onready var btn_draw_new = $UI/MenuPanel/CircuitVBox/BtnDrawNew
-@onready var btn_save = $UI/MenuPanel/CircuitVBox/BtnSave
-@onready var btn_load = $UI/MenuPanel/CircuitVBox/BtnLoad
-@onready var btn_back = $UI/MenuPanel/CircuitVBox/BtnBack
+@onready var circuit_hbox = $UI/MenuPanel/CircuitHBox 
+@onready var btn_save = $UI/MenuPanel/CircuitHBox/LeftColumn/BtnSave
+@onready var btn_load = $UI/MenuPanel/CircuitHBox/LeftColumn/BtnLoad
+@onready var btn_delete = $UI/MenuPanel/CircuitHBox/LeftColumn/BtnDelete
+@onready var btn_draw_new = $UI/MenuPanel/CircuitHBox/LeftColumn/BtnDrawNew
+@onready var btn_back = $UI/MenuPanel/CircuitHBox/LeftColumn/BtnBack
+
+@onready var input_track_name = $UI/MenuPanel/CircuitHBox/RightColumn/InputTrackName
+var selected_track_name: String = "" 			## Tracks which thumbnail is currently selected
+@onready var load_grid = $UI/MenuPanel/CircuitHBox/RightColumn/ScrollContainer/GridContainer
 
 @onready var track_line = $TrackLine
 @onready var kerb_line = $KerbLine
@@ -64,6 +70,9 @@ var personal_best_sectors: Array = [INF, INF, INF]		## Fastest sector times reco
 var overall_best_sectors: Array = [INF, INF, INF]		## Overall fastest sector times (Leaderboard/GA)
 
 func _ready():
+	# Check for the local track directory
+	FileManager.ensure_dir_exists()
+		
 	# Configuring nodes for styling
 	for line in [track_line, kerb_line, inner_wall, outer_wall]:
 		if line:
@@ -98,7 +107,7 @@ func _ready():
 func _process(delta):
 	if Input.is_action_just_pressed("ui_cancel"): # Escape
 		if not ui_menu.visible:
-			circuit_vbox.hide()
+			circuit_hbox.hide()
 			main_vbox.show()
 		ui_menu.visible = !ui_menu.visible
 		
@@ -570,14 +579,15 @@ func frame_camera():
 	
 	cam.zoom = Vector2(min_zoom, min_zoom)
 
+## Swap to circuit submenu
 func _on_btn_circuit_pressed():
-	# Swap to circuit submenu
 	main_vbox.hide()
-	circuit_vbox.show()
+	circuit_hbox.show()
+	refresh_track_library()
 
+## # Swap back to main menu
 func _on_btn_back_pressed():
-	# Swap back to main menu
-	circuit_vbox.hide()
+	circuit_hbox.hide()
 	main_vbox.show()
 
 func _on_btn_draw_new_pressed():
@@ -592,10 +602,137 @@ func _on_btn_draw_new_pressed():
 	print("Mode: Drawing")
 
 func _on_btn_save_pressed():
-	print("kawabanga")
+	if track_line.get_point_count() == 0 or not track_line.closed:
+		print("No valid closed track to save!")
+		return
+		
+	var track_name = input_track_name.text.strip_edges()
+	if track_name == "":
+		track_name = "Unnamed_Track"
+		
+	ui_menu.hide()
+	telemetry_layer.hide()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	
+	FileManager.save_thumbnail(track_name, get_viewport())
+	FileManager.save_track_data(track_name, track_line)
+	
+	ui_menu.show()
+	print("Track successfully saved as: " + track_name)
+	input_track_name.text = ""
+	
+	refresh_track_library()
 
 func _on_btn_load_pressed():
-	print("bazinga")
+	if selected_track_name == "":
+		print("No track selected!")
+		return
+		
+	_build_loaded_track(selected_track_name)
+
+func refresh_track_library():
+	selected_track_name = "" # Clear selection on refresh
+	
+	for child in load_grid.get_children():
+		child.queue_free()
+		
+	# A ButtonGroup links all the thumbnails so only ONE can be toggled 'on' at a time
+	var track_button_group = ButtonGroup.new()
+	var saved_tracks = FileManager.get_saved_tracks()
+	
+	for track_name in saved_tracks:
+		create_thumbnail_button(track_name, track_button_group)
+
+func create_thumbnail_button(track_name: String, btn_group: ButtonGroup):
+	# Vertical container to hold the image and text
+	var item_vbox = VBoxContainer.new()
+	
+	# PanelContainer acts as a border
+	var panel = PanelContainer.new()
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0.15, 0.15, 0.15)
+	style.border_width_bottom = 3
+	style.border_width_top = 3
+	style.border_width_left = 3
+	style.border_width_right = 3
+	style.border_color = Color(0.15, 0.15, 0.15)
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	panel.add_theme_stylebox_override("panel", style)
+	
+	# The clickable thumbnail image
+	var btn = TextureButton.new()
+	var tex = FileManager.load_track_thumbnail(track_name)
+	
+	if tex:
+		btn.texture_normal = tex
+		btn.ignore_texture_size = true
+		btn.custom_minimum_size = Vector2(128, 128)
+		btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED 
+		
+		# Allow the button to be toggled on/off and bind it to the group
+		btn.toggle_mode = true
+		btn.button_group = btn_group
+		
+		# Mouse Hover
+		btn.mouse_entered.connect(func():
+			if not btn.button_pressed:
+				style.border_color = Color(0.5, 0.5, 0.5) # Light grey hover border
+		)
+		# Mouse Exit
+		btn.mouse_exited.connect(func():
+			if not btn.button_pressed:
+				style.border_color = Color(0.15, 0.15, 0.15) # Return to invisible
+		)
+		# Mouse Click (Selection)
+		btn.toggled.connect(func(is_pressed):
+			if is_pressed:
+				style.border_color = Color(0.2, 0.8, 0.2) # Bright green selected border
+				selected_track_name = track_name
+			else:
+				style.border_color = Color(0.15, 0.15, 0.15) # Deselected
+		)
+
+		panel.add_child(btn)
+		item_vbox.add_child(panel)
+		
+		# Add track name underneath
+		var lbl = Label.new()
+		lbl.text = track_name
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.custom_minimum_size = Vector2(128, 0)
+		item_vbox.add_child(lbl)
+		
+		load_grid.add_child(item_vbox)
+
+func _build_loaded_track(track_name: String):
+	var loaded_points = FileManager.load_track_data(track_name)
+	if loaded_points.is_empty(): 
+		return
+	
+	track_line.clear_points()
+	kerb_line.clear_points()
+	track_curve = Curve2D.new()
+	
+	for p in loaded_points:
+		track_line.add_point(p)
+		kerb_line.add_point(p)
+		track_curve.add_point(p)
+		
+	track_line.closed = true
+	kerb_line.width = track_width + (kerb_width * 1.5)
+	
+	generate_boundaries(loaded_points)
+	create_checkpoints()
+	generate_debug_sectors()
+	frame_camera()
+	
+	overall_best_sectors = [INF, INF, INF]
+	print("Successfully loaded")
 
 func _on_btn_drive_pressed():
 	current_state = AppState.DRIVING

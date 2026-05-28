@@ -20,8 +20,6 @@ shadow_size = 5
 
 [sub_resource type="Theme" id="Theme_kl48d"]
 
-[sub_resource type="Theme" id="Theme_4jjux"]
-
 [node name="TrackBuilder" type="Node2D" unique_id=573167774]
 script = ExtResource("1_4jjux")
 
@@ -49,21 +47,17 @@ default_color = Color(1, 0, 0, 1)
 [node name="UI" type="CanvasLayer" parent="." unique_id=251563814]
 
 [node name="MenuPanel" type="PanelContainer" parent="UI" unique_id=1852134817]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -148.75
-offset_top = -195.5
-offset_right = 148.75
-offset_bottom = 195.5
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_4jjux")
 
 [node name="MainVBox" type="VBoxContainer" parent="UI/MenuPanel" unique_id=2095852618]
+visible = false
 layout_mode = 2
+size_flags_horizontal = 4
 theme_override_constants/separation = 10
 alignment = 1
 
@@ -112,24 +106,20 @@ text = "AI: Improve Line"
 icon_alignment = 1
 vertical_icon_alignment = 2
 
-[node name="CircuitVBox" type="VBoxContainer" parent="UI/MenuPanel" unique_id=1942530556]
+[node name="CircuitHBox" type="HBoxContainer" parent="UI/MenuPanel" unique_id=2002708536]
+clip_contents = true
+custom_minimum_size = Vector2(800, 0)
 layout_mode = 2
-theme_override_constants/separation = 10
-alignment = 1
+theme_override_constants/separation = 14
 
-[node name="BtnDrawNew" type="Button" parent="UI/MenuPanel/CircuitVBox" unique_id=1176460430]
+[node name="LeftColumn" type="VBoxContainer" parent="UI/MenuPanel/CircuitHBox" unique_id=1211487283]
+custom_minimum_size = Vector2(75, 0)
 layout_mode = 2
-theme_override_constants/outline_size = 0
-theme_override_font_sizes/font_size = 25
-theme_override_styles/normal = ExtResource("2_k10l3")
-theme_override_styles/pressed = ExtResource("3_hvbap")
-theme_override_styles/hover = ExtResource("4_fx3xo")
-text = "Draw"
-icon_alignment = 1
-vertical_icon_alignment = 2
+size_flags_horizontal = 0
 
-[node name="BtnSave" type="Button" parent="UI/MenuPanel/CircuitVBox" unique_id=133955423]
+[node name="BtnSave" type="Button" parent="UI/MenuPanel/CircuitHBox/LeftColumn" unique_id=133955423]
 layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/outline_size = 0
 theme_override_font_sizes/font_size = 25
 theme_override_styles/normal = ExtResource("2_k10l3")
@@ -139,7 +129,7 @@ text = "Save"
 icon_alignment = 1
 vertical_icon_alignment = 2
 
-[node name="BtnLoad" type="Button" parent="UI/MenuPanel/CircuitVBox" unique_id=1289717527]
+[node name="BtnLoad" type="Button" parent="UI/MenuPanel/CircuitHBox/LeftColumn" unique_id=1289717527]
 layout_mode = 2
 theme_override_constants/outline_size = 0
 theme_override_font_sizes/font_size = 25
@@ -150,9 +140,31 @@ text = "Load"
 icon_alignment = 1
 vertical_icon_alignment = 2
 
-[node name="BtnBack" type="Button" parent="UI/MenuPanel/CircuitVBox" unique_id=1962362616]
+[node name="BtnDelete" type="Button" parent="UI/MenuPanel/CircuitHBox/LeftColumn" unique_id=1538372130]
 layout_mode = 2
-theme = SubResource("Theme_4jjux")
+theme_override_font_sizes/font_size = 25
+theme_override_styles/normal = ExtResource("2_k10l3")
+theme_override_styles/pressed = ExtResource("3_hvbap")
+theme_override_styles/hover = ExtResource("4_fx3xo")
+disabled = true
+text = "Delete"
+autowrap_trim_flags = 0
+icon_alignment = 1
+vertical_icon_alignment = 0
+
+[node name="BtnDrawNew" type="Button" parent="UI/MenuPanel/CircuitHBox/LeftColumn" unique_id=1176460430]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/outline_size = 0
+theme_override_font_sizes/font_size = 25
+theme_override_styles/normal = ExtResource("2_k10l3")
+theme_override_styles/pressed = ExtResource("3_hvbap")
+theme_override_styles/hover = ExtResource("4_fx3xo")
+text = "Draw"
+icon_alignment = 1
+
+[node name="BtnBack" type="Button" parent="UI/MenuPanel/CircuitHBox/LeftColumn" unique_id=1962362616]
+layout_mode = 2
 theme_override_constants/outline_size = 0
 theme_override_font_sizes/font_size = 25
 theme_override_styles/normal = ExtResource("2_k10l3")
@@ -161,3 +173,26 @@ theme_override_styles/hover = ExtResource("4_fx3xo")
 text = "Back"
 icon_alignment = 1
 vertical_icon_alignment = 2
+
+[node name="RightColumn" type="VBoxContainer" parent="UI/MenuPanel/CircuitHBox" unique_id=1150260983]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="InputTrackName" type="LineEdit" parent="UI/MenuPanel/CircuitHBox/RightColumn" unique_id=1495113131]
+layout_mode = 2
+size_flags_vertical = 4
+placeholder_text = "Track name"
+alignment = 1
+emoji_menu_enabled = false
+virtual_keyboard_enabled = false
+icon_expand_mode = 2
+
+[node name="ScrollContainer" type="ScrollContainer" parent="UI/MenuPanel/CircuitHBox/RightColumn" unique_id=1122140518]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="GridContainer" type="GridContainer" parent="UI/MenuPanel/CircuitHBox/RightColumn/ScrollContainer" unique_id=864951383]
+layout_mode = 2
+size_flags_vertical = 3
+columns = 3
