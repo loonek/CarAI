@@ -61,3 +61,13 @@ static func load_track_data(track_name: String) -> PackedVector2Array:
 			loaded_points.append(Vector2(p["x"], p["y"]))
 		
 	return loaded_points
+
+## Deletes the JSON and PNG files associated with a track
+static func delete_track(track_name: String):
+	var json_path = SAVE_DIR + track_name + ".json"
+	var png_path = SAVE_DIR + track_name + ".png"
+	
+	if FileAccess.file_exists(json_path):
+		DirAccess.remove_absolute(json_path)
+	if FileAccess.file_exists(png_path):
+		DirAccess.remove_absolute(png_path)

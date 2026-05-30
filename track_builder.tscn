@@ -113,7 +113,7 @@ layout_mode = 2
 theme_override_constants/separation = 14
 
 [node name="LeftColumn" type="VBoxContainer" parent="UI/MenuPanel/CircuitHBox" unique_id=1211487283]
-custom_minimum_size = Vector2(75, 0)
+custom_minimum_size = Vector2(100, 0)
 layout_mode = 2
 size_flags_horizontal = 0
 
@@ -136,6 +136,7 @@ theme_override_font_sizes/font_size = 25
 theme_override_styles/normal = ExtResource("2_k10l3")
 theme_override_styles/pressed = ExtResource("3_hvbap")
 theme_override_styles/hover = ExtResource("4_fx3xo")
+theme_override_styles/disabled = ExtResource("3_hvbap")
 text = "Load"
 icon_alignment = 1
 vertical_icon_alignment = 2
@@ -146,7 +147,7 @@ theme_override_font_sizes/font_size = 25
 theme_override_styles/normal = ExtResource("2_k10l3")
 theme_override_styles/pressed = ExtResource("3_hvbap")
 theme_override_styles/hover = ExtResource("4_fx3xo")
-disabled = true
+theme_override_styles/disabled = ExtResource("3_hvbap")
 text = "Delete"
 autowrap_trim_flags = 0
 icon_alignment = 1
@@ -193,7 +194,9 @@ custom_minimum_size = Vector2(0, 100)
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="GridContainer" type="GridContainer" parent="UI/MenuPanel/CircuitHBox/RightColumn/ScrollContainer" unique_id=864951383]
+[node name="GridContainer" type="HFlowContainer" parent="UI/MenuPanel/CircuitHBox/RightColumn/ScrollContainer" unique_id=966130154]
 layout_mode = 2
+size_flags_horizontal = 3
 size_flags_vertical = 3
-columns = 3
+theme_override_constants/h_separation = 20
+theme_override_constants/v_separation = 20

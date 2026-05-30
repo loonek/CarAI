@@ -36,6 +36,8 @@ var selected_track_name: String = "" 			## Tracks which thumbnail is currently s
 var car_scene = preload("res://car.tscn")
 var active_car: CharacterBody2D = null
 
+var delete_dialog: ConfirmationDialog	## Popup to confirm track deletion
+
 var is_drawing: bool = false			## Bool for user's drawing status
 
 var min_point_distance = 10.0			## Minimum distance between points
@@ -95,6 +97,10 @@ func _ready():
 	btn_save.pressed.connect(_on_btn_save_pressed)
 	btn_load.pressed.connect(_on_btn_load_pressed)
 	btn_back.pressed.connect(_on_btn_back_pressed)
+	btn_delete.pressed.connect(_on_btn_delete_pressed)
+	
+	btn_load.disabled = true
+	btn_delete.disabled = true
 	
 	# Generate the kerb line texture
 	kerb_line.default_color = Color.WHITE
@@ -618,12 +624,43 @@ func _on_btn_save_pressed():
 	var track_name = input_track_name.text.strip_edges()
 	if track_name == "":
 		track_name = "Unnamed_Track"
+	
+	# Check if the track name already exists in the save folder
+	var saved_tracks = FileManager.get_saved_tracks()
+	
+	if saved_tracks.has(track_name):
+		# Generate a warning popup
+		var dialog = ConfirmationDialog.new()
+		dialog.title = "Overwrite Track?"
+		dialog.dialog_text = "A track named '" + track_name + "' already exists.\nDo you want to overwrite it?"
 		
+		ui_menu.add_child(dialog)
+		dialog.popup_centered()
+		
+		# Save and destroy the popup
+		dialog.confirmed.connect(func():
+			_execute_save(track_name)
+			dialog.queue_free()
+		)
+		
+		# Destroy the popup
+		dialog.canceled.connect(func():
+			dialog.queue_free()
+		)
+	else:
+		# No issues, save
+		_execute_save(track_name)
+
+## Helper function that processes the actual saving and screenshotting
+func _execute_save(track_name: String):
 	ui_menu.hide()
 	telemetry_layer.hide()
+	
+	# Wait for the screen to clear UI
 	await get_tree().process_frame
 	await get_tree().process_frame
 	
+	# Save with given name and the screenshot
 	FileManager.save_thumbnail(track_name, get_viewport())
 	FileManager.save_track_data(track_name, track_line)
 	
@@ -640,8 +677,37 @@ func _on_btn_load_pressed():
 		
 	_build_loaded_track(selected_track_name)
 
+func _on_btn_delete_pressed():
+	if selected_track_name == "": 
+		return
+	
+	# Popup asking for user's confrimation
+	var dialog = ConfirmationDialog.new()
+	dialog.title = "Delete Track"
+	dialog.dialog_text = "Are you sure you want to delete '" + selected_track_name + "'?\nThis cannot be undone."
+	
+	# Add the new popup to the UI
+	ui_menu.add_child(dialog)
+	dialog.popup_centered()
+	
+	# Delete if the user confirms
+	dialog.confirmed.connect(func():
+		FileManager.delete_track(selected_track_name)
+		print("Deleted: " + selected_track_name)
+		refresh_track_library()
+		dialog.queue_free() # Clean up the popup node
+	)
+	
+	# Destroy pop up if user declines
+	dialog.canceled.connect(func():
+		dialog.queue_free()
+	)
+
 func refresh_track_library():
 	selected_track_name = "" # Clear selection on refresh
+	
+	btn_load.disabled = true
+	btn_delete.disabled = true
 	
 	for child in load_grid.get_children():
 		child.queue_free()
@@ -701,6 +767,10 @@ func create_thumbnail_button(track_name: String, btn_group: ButtonGroup):
 			if is_pressed:
 				style.border_color = Color(0.2, 0.8, 0.2) # Bright green selected border
 				selected_track_name = track_name
+				
+				# Enable buttons for loading or deleting specific track
+				btn_load.disabled = false
+				btn_delete.disabled = false
 			else:
 				style.border_color = Color(0.15, 0.15, 0.15) # Deselected
 		)
