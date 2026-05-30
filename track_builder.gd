@@ -31,7 +31,7 @@ var selected_track_name: String = "" 			## Tracks which thumbnail is currently s
 @onready var inner_wall = $InnerWall
 @onready var outer_wall = $OuterWall
 
-@export var show_debug_sectors: bool = true		## Bool for setting the debug mode
+@export var show_debug_sectors: bool = false		## Bool for setting the debug mode
 
 var car_scene = preload("res://car.tscn")
 var active_car: CharacterBody2D = null
@@ -110,6 +110,9 @@ func _process(delta):
 			circuit_hbox.hide()
 			main_vbox.show()
 		ui_menu.visible = !ui_menu.visible
+		
+		if current_state == AppState.DRIVING:
+			telemetry_layer.visible = not ui_menu.visible
 		
 	# Update the lap timer string if a valid lap is currently underway
 	if current_state == AppState.DRIVING and lap_started:
@@ -252,7 +255,7 @@ func apply_moving_average(points: PackedVector2Array) -> PackedVector2Array:
 	
 	return smoothed
 
-## Generates off-track elements,like grass and walls, based on the track's line.
+## Generates off-track elements,like grass and walls, based on the track's line
 func generate_boundaries(center_points: PackedVector2Array):
 	var poly_points = center_points.duplicate()
 	
@@ -598,6 +601,12 @@ func _on_btn_draw_new_pressed():
 	if active_car != null:
 		active_car.queue_free()
 		active_car = null
+	
+	# Rescale the cam
+	var cam = get_node_or_null("TrackCamera")
+	if cam:
+		cam.zoom = Vector2.ONE
+		cam.global_position = get_viewport_rect().size / 2.0
 	
 	print("Mode: Drawing")
 

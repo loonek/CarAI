@@ -181,6 +181,7 @@ size_flags_horizontal = 3
 [node name="InputTrackName" type="LineEdit" parent="UI/MenuPanel/CircuitHBox/RightColumn" unique_id=1495113131]
 layout_mode = 2
 size_flags_vertical = 4
+theme_override_font_sizes/font_size = 25
 placeholder_text = "Track name"
 alignment = 1
 emoji_menu_enabled = false
