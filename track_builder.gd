@@ -39,6 +39,10 @@ var active_car: CharacterBody2D = null
 var delete_dialog: ConfirmationDialog	## Popup to confirm track deletion
 
 var is_drawing: bool = false			## Bool for user's drawing status
+var has_valid_track: bool = false		## True once a track is drawn or loaded; gates the Drive/AI modes
+
+var lbl_circuit_status: Label			## Transient status message in the circuit menu (load/save feedback)
+var _status_token: int = 0				## Guards the auto-clear so only the latest status message clears itself
 
 var min_point_distance = 10.0			## Minimum distance between points
 var close_treshold = 50 				## Minimum distance from last to first point of the track
@@ -52,9 +56,11 @@ var track_width: float = 30.0			## Default track width at full size
 var kerb_width: float = 10.0			## Default width of the kerbs outside the track
 var wall_dist: float = 60.0				## Minimum distance from track center to the wall
 var track_curve: Curve2D = null			## Track curve, updated during track smoothing process
+var track_surface: TrackSurface = null	## Precomputed surface mask handed to cars for cheap on-track/grass checks
 
 var checkpoints_node: Node2D = null		## Node storing the physical checkpoints for sector timing
 var telemetry_layer: CanvasLayer = null	## UI Layer for the telemetry HUD
+var input_telemetry: InputTelemetry = null	## HUD visualizing live steering and pedal inputs
 var lbl_current: Label					## Label for current lap time
 var lbl_best: Label						## Label for best lap time
 var lbl_last: Label						## Label for last lap time
@@ -76,13 +82,24 @@ func _ready():
 	FileManager.ensure_dir_exists()
 		
 	# Configuring nodes for styling
-	for line in [track_line, kerb_line, inner_wall, outer_wall]:
+	for line in [track_line, inner_wall, outer_wall]:
 		if line:
 			line.joint_mode = Line2D.LINE_JOINT_ROUND
 			line.begin_cap_mode = Line2D.LINE_CAP_ROUND
 			line.end_cap_mode = Line2D.LINE_CAP_ROUND
 			line.antialiased = true
 			line.closed = true
+
+	# The kerb is a wide, tiled-texture line drawn beneath the track. Round
+	# joints render each vertex as a fan sharing a single texel, which lands in
+	# the white half of the kerb texture and leaves bright dots poking out past
+	# the narrower track line. Bevel joints + no caps + no AA avoid that.
+	if kerb_line:
+		kerb_line.joint_mode = Line2D.LINE_JOINT_BEVEL
+		kerb_line.begin_cap_mode = Line2D.LINE_CAP_NONE
+		kerb_line.end_cap_mode = Line2D.LINE_CAP_NONE
+		kerb_line.antialiased = false
+		kerb_line.closed = true
 			
 	# Hide the menu by default
 	ui_menu.hide()
@@ -101,7 +118,23 @@ func _ready():
 	
 	btn_load.disabled = true
 	btn_delete.disabled = true
-	
+
+	# Status label for circuit menu feedback (load/save/delete results)
+	lbl_circuit_status = Label.new()
+	lbl_circuit_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl_circuit_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl_circuit_status.custom_minimum_size = Vector2(100, 0)
+	$UI/MenuPanel/CircuitHBox/LeftColumn.add_child(lbl_circuit_status)
+
+	# Reuse the Load button's disabled styling so gated buttons read as disabled
+	var disabled_style = btn_load.get_theme_stylebox("disabled")
+	if disabled_style:
+		for b in [btn_drive, btn_ai_new, btn_ai_improve]:
+			b.add_theme_stylebox_override("disabled", disabled_style)
+
+	# Drive/AI modes require a track, so they start disabled
+	update_drive_buttons()
+
 	# Generate the kerb line texture
 	kerb_line.default_color = Color.WHITE
 	kerb_line.texture = generate_kerb_texture()
@@ -109,6 +142,27 @@ func _ready():
 	kerb_line.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	
 	setup_telemetry_ui()
+
+## Enables the Drive/AI buttons only when a valid track exists
+func update_drive_buttons():
+	btn_drive.disabled = not has_valid_track
+	btn_ai_new.disabled = not has_valid_track
+	btn_ai_improve.disabled = not has_valid_track
+
+## Shows a transient message in the circuit menu, auto-clearing after `duration` seconds
+func show_circuit_status(text: String, color: Color = Color.WHITE, duration: float = 3.0):
+	if not lbl_circuit_status:
+		return
+	lbl_circuit_status.text = text
+	lbl_circuit_status.add_theme_color_override("font_color", color)
+
+	# Token guards against an older message clearing a newer one
+	_status_token += 1
+	var my_token = _status_token
+	if duration > 0.0:
+		await get_tree().create_timer(duration).timeout
+		if my_token == _status_token and lbl_circuit_status:
+			lbl_circuit_status.text = ""
 
 func _process(delta):
 	if Input.is_action_just_pressed("ui_cancel"): # Escape
@@ -124,6 +178,11 @@ func _process(delta):
 	if current_state == AppState.DRIVING and lap_started:
 		lap_timer += delta
 		lbl_current.text = "Time: " + format_time(lap_timer)
+
+	# Feed live driver inputs to the input HUD while driving
+	if current_state == AppState.DRIVING and telemetry_layer.visible and active_car and is_instance_valid(active_car):
+		input_telemetry.steer = active_car.input_steer
+		input_telemetry.throttle = active_car.input_throttle
 
 func _unhandled_input(event):
 	# Ignore drawing inputs outside the drawing mode
@@ -167,6 +226,11 @@ func _start_drawing():
 	track_line.width = track_width
 	track_line.closed = false
 	is_drawing = true
+
+	# The previous track is wiped; block the Drive/AI modes until a new one is finalized
+	has_valid_track = false
+	track_surface = null
+	update_drive_buttons()
 	
 	track_line.add_point(get_global_mouse_position())
 	
@@ -240,7 +304,12 @@ func generate_track():
 	generate_boundaries(visual_points)
 	create_checkpoints()
 	generate_debug_sectors()
+	build_track_surface()
 	frame_camera()
+
+	# A finalized track unlocks the Drive/AI modes
+	has_valid_track = true
+	update_drive_buttons()
 
 ## Smoothing the track based smoothing_iterations, calculating average between previous,current and future point, aligning current point's position the ones next to it
 func apply_moving_average(points: PackedVector2Array) -> PackedVector2Array:
@@ -539,7 +608,14 @@ func setup_telemetry_ui():
 		var l = Label.new()
 		vbox.add_child(l)
 		lbl_sectors.append(l)
-		
+
+	# Input HUD (steering + pedals), anchored bottom-left
+	input_telemetry = InputTelemetry.new()
+	input_telemetry.custom_minimum_size = Vector2(250, 170)
+	input_telemetry.size = Vector2(250, 170)
+	input_telemetry.position = Vector2(20, get_viewport_rect().size.y - 190)
+	telemetry_layer.add_child(input_telemetry)
+
 	reset_telemetry_ui()
 	telemetry_layer.hide()
 
@@ -618,7 +694,7 @@ func _on_btn_draw_new_pressed():
 
 func _on_btn_save_pressed():
 	if track_line.get_point_count() == 0 or not track_line.closed:
-		print("No valid closed track to save!")
+		show_circuit_status("No valid track to save", Color.RED)
 		return
 		
 	var track_name = input_track_name.text.strip_edges()
@@ -665,16 +741,16 @@ func _execute_save(track_name: String):
 	FileManager.save_track_data(track_name, track_line)
 	
 	ui_menu.show()
-	print("Track successfully saved as: " + track_name)
 	input_track_name.text = ""
-	
+
 	refresh_track_library()
+	show_circuit_status("Saved '%s'" % track_name, Color.GREEN)
 
 func _on_btn_load_pressed():
 	if selected_track_name == "":
-		print("No track selected!")
+		show_circuit_status("No track selected", Color.RED)
 		return
-		
+
 	_build_loaded_track(selected_track_name)
 
 func _on_btn_delete_pressed():
@@ -690,11 +766,14 @@ func _on_btn_delete_pressed():
 	ui_menu.add_child(dialog)
 	dialog.popup_centered()
 	
+	# Capture the name before refresh clears the current selection
+	var deleted_name = selected_track_name
+
 	# Delete if the user confirms
 	dialog.confirmed.connect(func():
-		FileManager.delete_track(selected_track_name)
-		print("Deleted: " + selected_track_name)
+		FileManager.delete_track(deleted_name)
 		refresh_track_library()
+		show_circuit_status("Deleted '%s'" % deleted_name, Color.WHITE)
 		dialog.queue_free() # Clean up the popup node
 	)
 	
@@ -790,7 +869,8 @@ func create_thumbnail_button(track_name: String, btn_group: ButtonGroup):
 
 func _build_loaded_track(track_name: String):
 	var loaded_points = FileManager.load_track_data(track_name)
-	if loaded_points.is_empty(): 
+	if loaded_points.is_empty():
+		show_circuit_status("Failed to load '%s'" % track_name, Color.RED)
 		return
 	
 	track_line.clear_points()
@@ -808,10 +888,23 @@ func _build_loaded_track(track_name: String):
 	generate_boundaries(loaded_points)
 	create_checkpoints()
 	generate_debug_sectors()
+	build_track_surface()
 	frame_camera()
-	
+
 	overall_best_sectors = [INF, INF, INF]
-	print("Successfully loaded")
+
+	# A loaded track unlocks the Drive/AI modes
+	has_valid_track = true
+	update_drive_buttons()
+	show_circuit_status("Loaded '%s'" % track_name, Color.GREEN)
+
+## Bakes the current track curve into a surface mask used for fast on-track/grass queries
+func build_track_surface():
+	if not track_curve:
+		track_surface = null
+		return
+	var corridor_radius = (track_width / 2.0) + kerb_width
+	track_surface = TrackSurface.build(track_curve.get_baked_points(), corridor_radius)
 
 func _on_btn_drive_pressed():
 	current_state = AppState.DRIVING
@@ -829,16 +922,19 @@ func _on_btn_drive_pressed():
 	var car_scale_factor = (track_width * 0.5) / 64.0
 	active_car.scale = Vector2(car_scale_factor / 2.0, car_scale_factor / 2.0)
 	
-	# Scale physics
+	# Scale physics to keep the car's feel consistent across track sizes.
+	# Accelerations, speeds and lengths scale with the car; rates (friction,
+	# grip) and angles are scale-independent. Quadratic drag scales inversely.
 	active_car.engine_power *= car_scale_factor
 	active_car.brake_power *= car_scale_factor
-	active_car.friction *= car_scale_factor
-	active_car.drag *= car_scale_factor
 	active_car.reverse_max_speed *= car_scale_factor
-	active_car.slip_speed *= car_scale_factor
+	active_car.slip_threshold *= car_scale_factor
+	active_car.min_speed_stop *= car_scale_factor
+	active_car.wheel_base *= car_scale_factor
+	active_car.drag /= car_scale_factor
 	
 	# Pass track geometry
-	active_car.track_curve = track_curve
+	active_car.track_surface = track_surface
 	active_car.track_limit = (track_width / 2.0) + kerb_width
 	
 	# Check for the car driving off the track
