@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+results/best_line.png
+results/best_line.json
+track_data.json
+*.pyc
