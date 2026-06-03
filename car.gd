@@ -2,6 +2,13 @@ extends CharacterBody2D
 
 signal lap_invalidated						## Emitted when all 4 wheels of the car cross the track boundary
 
+# --- AI controller tuning (edit these to tune AI behaviour) ---
+const LOOKAHEAD_TIME     := 0.3		## Seconds ahead to aim the heading target (speed × this = lookahead px)
+const MIN_LOOKAHEAD      := 20.0	## Minimum lookahead distance in pixels regardless of speed
+const WAYPOINT_THRESHOLD := 15.0	## Distance (px) at which the current waypoint is considered reached
+const STEERING_GAIN      := 1.0		## Multiplier on heading error → raw steer (reduce if still oscillating)
+const SPEED_BLEND        := 0.15	## Fractional dead-band around target speed before throttle/brake kicks in
+
 # --- Longitudinal (engine / brakes / resistance) ---
 var engine_power: float = 1200.0			## Forward acceleration at full throttle (px/s^2)
 var brake_power: float = -1600.0			## Braking deceleration (negative, opposes forward motion)
@@ -38,6 +45,13 @@ var car_length: float = 50.0				## Visual approximate length, for corner bounds
 var car_width: float = 25.0					## Visual approximate width, for corner bounds
 
 var _raw_steer: float = 0.0					## Raw steering input this frame, -1 .. 1
+
+# --- AI autonomous driving ---
+var ai_mode: bool = false					## When true, overrides player input with computed commands
+var ai_waypoints: PackedVector2Array = []	## Racing-line positions from the GA (pixel coords, Y-down)
+var ai_speeds:    PackedFloat32Array  = []	## Target speed (px/s) per waypoint — from Python speed profile
+var ai_headings:  PackedFloat32Array  = []	## Tangent angle (radians, Y-down) per waypoint — for heading control
+var _ai_target_idx: int = 0				## Index of the most-recently-reached waypoint
 
 func _physics_process(delta: float) -> void:
 	check_track_limits()
@@ -77,10 +91,79 @@ func check_track_limits():
 	if wheels_out == 4:
 		lap_invalidated.emit()
 
-## Reads raw player input for this frame
+## Reads raw player input for this frame (or computes AI input when ai_mode is set)
 func read_input():
+	if ai_mode and ai_waypoints.size() > 0:
+		_compute_ai_input()
+		return
 	input_throttle = Input.get_axis("brake", "accelerate")		## W/S || Up/Down
 	_raw_steer = Input.get_axis("steer_left", "steer_right")		## A/D || Left/Right
+
+## AI controller: speed profiling + heading control.
+##
+## SPEED:   Compares current speed to the target speed (px/s) exported by the
+##          Python speed profile at the nearest waypoint.  Applies full throttle
+##          when below target (with SPEED_BLEND tolerance) and full brake when
+##          above.  The Python profile correctly identifies corners (low target)
+##          vs straights (high target) even though its absolute magnitudes differ
+##          from Godot's physics — the car will naturally cap at its own top speed
+##          on straights and brake appropriately for corners.
+##
+## HEADING: Steers to match the tangent direction (heading) at the lookahead
+##          waypoint rather than chasing the waypoint's position.  This tracks
+##          the road direction smoothly without the overshoot that position-based
+##          pure-pursuit causes.  Lookahead scales with speed so fast sections
+##          look further ahead and slow corners look close.
+##
+## Coordinate system: both Python and Godot use Y-down pixels.  No flip.
+## Heading angles from Python (atan2(dy,dx), Y-down) match Godot Vector2.angle().
+func _compute_ai_input() -> void:
+	var n := ai_waypoints.size()
+	if n == 0:
+		return
+	var pos := global_position
+
+	# Advance _ai_target_idx while the car has reached the current waypoint.
+	var adv := 0
+	while pos.distance_to(ai_waypoints[_ai_target_idx % n]) < WAYPOINT_THRESHOLD and adv < n:
+		_ai_target_idx += 1
+		adv += 1
+	var cur_idx := _ai_target_idx % n
+
+	# ── Speed control ────────────────────────────────────────────────────────
+	var current_speed := velocity.length()
+	var target_speed  := float(ai_speeds[cur_idx]) if ai_speeds.size() == n else 120.0
+	if current_speed < target_speed * (1.0 - SPEED_BLEND):
+		input_throttle = 1.0   # below target → full gas
+	elif current_speed > target_speed * (1.0 + SPEED_BLEND):
+		input_throttle = -1.0  # above target → full brake (apply_longitudinal uses brake_power)
+	else:
+		input_throttle = 0.0   # within dead-band → coast
+
+	# ── Heading control ───────────────────────────────────────────────────────
+	# Find the lookahead waypoint: at least (speed × LOOKAHEAD_TIME) px ahead.
+	var lookahead := maxf(MIN_LOOKAHEAD, current_speed * LOOKAHEAD_TIME)
+	var look_idx := _ai_target_idx
+	var steps := 0
+	while pos.distance_to(ai_waypoints[look_idx % n]) < lookahead and steps < n:
+		look_idx += 1
+		steps += 1
+	look_idx = look_idx % n
+
+	var target_heading: float
+	if ai_headings.size() == n:
+		# Use the pre-computed tangent direction exported by Python
+		target_heading = float(ai_headings[look_idx])
+	else:
+		# Fallback: derive heading from waypoint position (old pure-pursuit)
+		target_heading = (ai_waypoints[look_idx] - pos).angle()
+
+	# Signed error from current heading to target heading, wrapped to (-PI, PI]
+	var my_heading   := transform.x.normalized().angle()
+	var steer_error  := angle_difference(my_heading, target_heading)
+
+	# Normalise by max_steer_angle to produce _raw_steer in [-1, 1]
+	_raw_steer = clampf(steer_error * STEERING_GAIN / deg_to_rad(max_steer_angle), -1.0, 1.0)
 
 ## Applies engine, braking and resistance along the car's forward axis
 func apply_longitudinal(delta: float):

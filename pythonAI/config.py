@@ -8,6 +8,7 @@ RESULTS_DIR = PYTHON_AI_DIR / "results"
 TRACK_DATA_PATH = PYTHON_AI_DIR / "track_data.json"   # written by Godot
 BEST_LINE_JSON = RESULTS_DIR / "best_line.json"        # read by Godot
 BEST_LINE_PNG = RESULTS_DIR / "best_line.png"
+CURRENT_BEST_JSON = RESULTS_DIR / "current_best.json" # polled every 0.5 s by Godot
 
 # ---------------------------------------------------------------------------
 # Genetic Algorithm

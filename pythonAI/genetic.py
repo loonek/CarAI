@@ -16,6 +16,8 @@ Elitism     : top ELITISM_COUNT individuals copied unchanged each generation
 
 from __future__ import annotations
 
+from typing import Callable, Optional
+
 import numpy as np
 
 import config
@@ -59,12 +61,24 @@ def _gaussian_mutate(individual: np.ndarray,
 # Main loop
 # ---------------------------------------------------------------------------
 
-def evolve(track: Track, seed: int = config.RANDOM_SEED) -> tuple[np.ndarray, float]:
+def evolve(
+    track: Track,
+    seed: int = config.RANDOM_SEED,
+    initial_population: Optional[np.ndarray] = None,
+    on_generation: Optional[Callable[[int, np.ndarray, float], None]] = None,
+) -> tuple[np.ndarray, float]:
     """
     Run the genetic algorithm.
 
-    Prints per-generation statistics:
-      Gen XXXX | Best: XX.XXXs | Mean: XX.XXXs | Std: X.XXXs
+    Parameters
+    ----------
+    track              : Track object
+    seed               : RNG seed (ignored when initial_population is supplied)
+    initial_population : optional pre-built (POP_SIZE, N_SECTIONS) array; used
+                         by --mode improve to seed from a previous best line
+    on_generation      : optional callback(gen, best_chromosome, best_fitness)
+                         called once per generation — used by main.py to write
+                         current_best.json for Godot's live preview
 
     Returns
     -------
@@ -72,7 +86,7 @@ def evolve(track: Track, seed: int = config.RANDOM_SEED) -> tuple[np.ndarray, fl
     best_fitness    : float  (estimated lap time in seconds)
     """
     rng = np.random.default_rng(seed)
-    population = _init_population(rng)
+    population = initial_population if initial_population is not None else _init_population(rng)
 
     best_chromosome = population[0].copy()
     best_fitness = float("inf")
@@ -93,6 +107,9 @@ def evolve(track: Track, seed: int = config.RANDOM_SEED) -> tuple[np.ndarray, fl
             best_chromosome = population[gen_best_idx].copy()
 
         print(f"{gen:4d}  {gen_best:10.3f}  {gen_mean:10.3f}  {gen_std:9.3f}")
+
+        if on_generation is not None:
+            on_generation(gen, best_chromosome, best_fitness)
 
         # --- Build next generation ---
         elite_idx = np.argsort(fitnesses)[: config.ELITISM_COUNT]

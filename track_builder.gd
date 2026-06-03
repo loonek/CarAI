@@ -67,6 +67,13 @@ var lbl_last: Label						## Label for last lap time
 var lbl_delta: Label					## Label for delta time compared to best lap
 var lbl_sectors: Array[Label] = []		## Array of labels for sector times
 
+## AI process management
+var ai_pid: int = -1					## OS PID of the running Python process (-1 = none)
+var ai_poll_timer: Timer = null			## Fires every 0.5 s to poll current_best.json
+var ai_racing_line_node: Line2D = null	## Cyan line drawn over the track during AI training
+var ai_last_read_gen: int = -1			## Detect when a new generation arrives in the JSON
+var _ga_ever_evolved: bool = false		## True once the current GA run has sent at least one "evolving" update
+
 var lap_started: bool = false							## Bool indicating if the current lap is being timed
 var is_lap_valid: bool = true							## Bool indicating if the current lap is valid (no track limits breached)
 var lap_timer: float = 0.0								## Time elapsed in the current lap
@@ -171,7 +178,7 @@ func _process(delta):
 			main_vbox.show()
 		ui_menu.visible = !ui_menu.visible
 		
-		if current_state == AppState.DRIVING:
+		if current_state in [AppState.DRIVING, AppState.AI_NEW, AppState.AI_IMPROVE]:
 			telemetry_layer.visible = not ui_menu.visible
 		
 	# Update the lap timer string if a valid lap is currently underway
@@ -676,6 +683,12 @@ func _on_btn_back_pressed():
 	main_vbox.show()
 
 func _on_btn_draw_new_pressed():
+	_kill_ai_process()
+	_stop_ai_poll_timer()
+	if ai_racing_line_node and is_instance_valid(ai_racing_line_node):
+		ai_racing_line_node.queue_free()
+		ai_racing_line_node = null
+
 	current_state = AppState.DRAWING
 	ui_menu.hide()
 	telemetry_layer.hide()
@@ -967,9 +980,265 @@ func _on_btn_drive_pressed():
 func _on_btn_ai_new_pressed():
 	current_state = AppState.AI_NEW
 	ui_menu.hide()
+	track_line.default_color = Color.BLACK
 	print("Mode: AI New")
 
+	export_track_to_json()
+	_kill_ai_process()
+	if active_car and is_instance_valid(active_car):
+		active_car.queue_free()
+		active_car = null
+	_ga_ever_evolved = false
+	_setup_ai_mode_ui("Starting…")
+	_launch_python("new")
+	_start_ai_poll_timer()
+
 func _on_btn_ai_improve_pressed():
+	if not FileAccess.file_exists(_ai_path("pythonAI/results/best_line.json")):
+		# No saved line — show message in the HUD briefly, don't crash
+		_setup_ai_mode_ui("No saved line to improve.")
+		telemetry_layer.show()
+		get_tree().create_timer(2.5).timeout.connect(func(): telemetry_layer.hide())
+		return
+
 	current_state = AppState.AI_IMPROVE
 	ui_menu.hide()
+	track_line.default_color = Color.BLACK
 	print("Mode: AI Improve")
+
+	export_track_to_json()
+	_kill_ai_process()
+	if active_car and is_instance_valid(active_car):
+		active_car.queue_free()
+		active_car = null
+	_ga_ever_evolved = false
+	_setup_ai_mode_ui("Starting (improve)…")
+	_launch_python("improve")
+	_start_ai_poll_timer()
+
+# =============================================================================
+# AI integration helpers
+# =============================================================================
+
+## Returns the absolute path to a file relative to the project root.
+## Safe whether globalize_path returns a trailing slash or not.
+func _ai_path(relative: String) -> String:
+	return ProjectSettings.globalize_path("res://").trim_suffix("/") + "/" + relative
+
+## Exports the current track's centreline to pythonAI/track_data.json so that
+## the Python GA can read it. Format matches the schema in pythonAI/track.py.
+func export_track_to_json() -> void:
+	if not track_curve:
+		return
+	var baked := track_curve.get_baked_points()
+	var centerline := []
+	for p: Vector2 in baked:
+		centerline.append([p.x, p.y])
+	var payload := {
+		"version": 1,
+		"wall_dist_px": wall_dist,
+		"track_width_px": track_width,
+		"kerb_width_px": kerb_width,
+		"pixels_per_meter": 10.0,
+		"centerline": centerline,
+	}
+	var path := _ai_path("pythonAI/track_data.json")
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(payload))
+		file.close()
+		print("Track exported → ", path)
+	else:
+		push_warning("AI: could not write track_data.json to ", path)
+
+## Sends SIGKILL to the Python process if one is running.
+func _kill_ai_process() -> void:
+	if ai_pid >= 0:
+		OS.kill(ai_pid)
+		ai_pid = -1
+
+## Launches pythonAI/main.py as a background process.  Fails silently if the
+## executable or script are missing (shows a HUD message instead of crashing).
+func _launch_python(mode: String) -> void:
+	var python_exe := _ai_path("pythonAI/.venv/bin/python3")
+	var main_py    := _ai_path("pythonAI/main.py")
+	if not FileAccess.file_exists(python_exe) or not FileAccess.file_exists(main_py):
+		push_warning("AI: Python executable or main.py not found.")
+		lbl_last.text = "Status: Python not found"
+		return
+	ai_pid = OS.create_process(python_exe, [main_py, "--mode", mode])
+	print("AI process launched  PID=", ai_pid, "  mode=", mode)
+
+## Repurposes the existing telemetry labels for AI-mode display.
+## lbl_current → generation counter
+## lbl_delta   → best estimated lap time
+## lbl_last    → status string
+## lbl_best    → static "AI Mode" title
+func _setup_ai_mode_ui(status_text: String) -> void:
+	# Create the racing-line overlay if it doesn't exist yet
+	if not ai_racing_line_node or not is_instance_valid(ai_racing_line_node):
+		ai_racing_line_node = Line2D.new()
+		ai_racing_line_node.width = 3.5
+		ai_racing_line_node.default_color = Color.CYAN
+		ai_racing_line_node.antialiased = true
+		ai_racing_line_node.joint_mode = Line2D.LINE_JOINT_ROUND
+		ai_racing_line_node.closed = true
+		add_child(ai_racing_line_node)
+
+	# Repurpose existing labels — no new nodes added
+	lbl_best.text    = "── AI Mode ──"
+	lbl_current.text = "Gen: 0"
+	lbl_delta.text   = "Best: --:--.---"
+	lbl_last.text    = "Status: " + status_text
+	for i in range(lbl_sectors.size()):
+		lbl_sectors[i].text = ""
+
+	# Clear colour overrides so labels are white by default
+	for lbl in [lbl_best, lbl_current, lbl_delta, lbl_last]:
+		lbl.remove_theme_color_override("font_color")
+
+	telemetry_layer.show()
+	ai_last_read_gen = -1
+
+## Starts (or restarts) the 0.5 s poll timer that reads current_best.json.
+func _start_ai_poll_timer() -> void:
+	_stop_ai_poll_timer()
+	ai_poll_timer = Timer.new()
+	ai_poll_timer.wait_time = 0.5
+	ai_poll_timer.one_shot = false
+	ai_poll_timer.timeout.connect(_on_ai_poll)
+	add_child(ai_poll_timer)
+	ai_poll_timer.start()
+
+## Stops and frees the poll timer.
+func _stop_ai_poll_timer() -> void:
+	if ai_poll_timer and is_instance_valid(ai_poll_timer):
+		ai_poll_timer.stop()
+		ai_poll_timer.queue_free()
+		ai_poll_timer = null
+
+## Called every 0.5 s — reads current_best.json and updates the HUD / racing line.
+func _on_ai_poll() -> void:
+	var path := _ai_path("pythonAI/results/current_best.json")
+	var file := FileAccess.open(path, FileAccess.READ)
+	if not file:
+		return  # File not written yet
+
+	var text := file.get_as_text()
+	file.close()
+
+	var data = JSON.parse_string(text)
+	if not data or not data is Dictionary:
+		return  # Partial write in progress
+
+	var gen: int    = data.get("generation", 0)
+	var total: int  = data.get("total_generations", 200)
+	var best  : float = data.get("best_time", INF)
+	var status: String = data.get("status", "evolving")
+
+	if status == "evolving":
+		_ga_ever_evolved = true
+
+	# Only refresh the HUD when new generation data arrives
+	if gen != ai_last_read_gen:
+		ai_last_read_gen = gen
+		lbl_current.text = "Gen: %d / %d" % [gen + 1, total]
+		lbl_delta.text   = "Best: " + format_time(best)
+		lbl_last.text    = "Status: " + ("Complete!" if status == "complete" else "Evolving…")
+
+		if data.has("waypoints"):
+			_update_ai_racing_line(data["waypoints"])
+
+	# Guard: ignore "complete" from a stale previous-run JSON (only act once we have
+	# seen at least one "evolving" update from the current Python process)
+	if status == "complete" and _ga_ever_evolved:
+		_stop_ai_poll_timer()
+		ai_pid = -1  # Process exited cleanly
+		_on_ai_complete(data)
+
+## Redraws the cyan racing-line overlay from the waypoints array in the JSON.
+func _update_ai_racing_line(waypoints_array: Array) -> void:
+	if not ai_racing_line_node or not is_instance_valid(ai_racing_line_node):
+		return
+	ai_racing_line_node.clear_points()
+	for wp in waypoints_array:
+		ai_racing_line_node.add_point(Vector2(float(wp[0]), float(wp[1])))
+
+## Called once when status == "complete".
+## Spawns the car and puts it in command-replay mode to drive the best line.
+func _on_ai_complete(data: Dictionary) -> void:
+	print("AI training complete — spawning AI car.")
+	lbl_last.text = "Status: Complete!"
+	lbl_last.add_theme_color_override("font_color", Color.GREEN)
+
+	# Prefer the richer "commands" array (new format, includes speed/heading);
+	# fall back to bare "waypoints" if this is an old-format JSON.
+	if data.has("commands") and not (data["commands"] as Array).is_empty():
+		_spawn_ai_car(data["commands"])
+	elif data.has("waypoints") and not (data["waypoints"] as Array).is_empty():
+		_spawn_ai_car(data["waypoints"])
+
+## Spawns the car scaled like the driving mode, then hands it the racing-line
+## commands so its heading+speed controller can follow them.
+##
+## commands_array may be either:
+##   New format: Array of Dicts  {"position":[x,y], "speed_pxs":f, "heading":f, ...}
+##   Old format: Array of Arrays [[x, y], ...]  (bare waypoints, no speed data)
+func _spawn_ai_car(commands_array: Array) -> void:
+	if active_car and is_instance_valid(active_car):
+		active_car.queue_free()
+
+	active_car = car_scene.instantiate()
+	add_child(active_car)
+
+	# Same scaling as the manual drive mode
+	var car_scale_factor := (track_width * 0.5) / 64.0
+	active_car.scale = Vector2(car_scale_factor / 2.0, car_scale_factor / 2.0)
+	active_car.engine_power      *= car_scale_factor
+	active_car.brake_power       *= car_scale_factor
+	active_car.reverse_max_speed *= car_scale_factor
+	active_car.slip_threshold    *= car_scale_factor
+	active_car.min_speed_stop    *= car_scale_factor
+	active_car.wheel_base        *= car_scale_factor
+	active_car.drag              /= car_scale_factor
+
+	active_car.track_surface = track_surface
+	active_car.track_limit   = (track_width / 2.0) + kerb_width
+	active_car.lap_invalidated.connect(invalidate_lap)
+
+	# Parse positions and — if present — speed/heading commands.
+	# Detect format by checking whether the first entry is a Dictionary.
+	var has_commands := commands_array.size() > 0 and commands_array[0] is Dictionary
+	var path_pts := PackedVector2Array()
+	var speeds   := PackedFloat32Array()
+	var headings := PackedFloat32Array()
+
+	for entry in commands_array:
+		var pos: Vector2
+		if has_commands:
+			var p = entry["position"]
+			pos = Vector2(float(p[0]), float(p[1]))
+			# speed_pxs already in Godot pixel-per-second units (Python converted)
+			speeds.append(float(entry.get("speed_pxs", 120.0)))
+			headings.append(float(entry.get("heading", 0.0)))
+		else:
+			pos = Vector2(float(entry[0]), float(entry[1]))
+		path_pts.append(pos)
+
+	active_car.ai_waypoints = path_pts
+	if has_commands:
+		active_car.ai_speeds   = speeds
+		active_car.ai_headings = headings
+
+	# Spawn at the first waypoint, oriented toward the fifth
+	var last_idx := mini(5, path_pts.size() - 1)
+	active_car.global_position = path_pts[0]
+	active_car.look_at(path_pts[last_idx])
+
+	active_car.ai_mode = true
+
+	# Camera follows AI car
+	var car_cam := active_car.get_node_or_null("Camera2D")
+	if car_cam:
+		car_cam.zoom = Vector2.ONE / car_scale_factor
+		car_cam.make_current()
