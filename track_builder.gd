@@ -67,6 +67,13 @@ var lbl_last: Label						## Label for last lap time
 var lbl_delta: Label					## Label for delta time compared to best lap
 var lbl_sectors: Array[Label] = []		## Array of labels for sector times
 
+## Dedicated AI/GA readout (kept separate from the lap-timing labels so both can
+## be shown at once — the real lap timer still times the AI car's laps)
+var ai_info_box: VBoxContainer = null	## Container for the AI labels, hidden outside AI mode
+var lbl_ai_gen: Label					## Generation counter
+var lbl_ai_best: Label					## GA's best estimated lap time
+var lbl_ai_status: Label				## GA status string
+
 ## AI process management
 var ai_pid: int = -1					## OS PID of the running Python process (-1 = none)
 var ai_poll_timer: Timer = null			## Fires every 0.5 s to poll current_best.json
@@ -150,6 +157,10 @@ func _ready():
 	
 	setup_telemetry_ui()
 
+## True in any mode that shows the telemetry HUD (manual driving or AI)
+func is_telemetry_mode() -> bool:
+	return current_state in [AppState.DRIVING, AppState.AI_NEW, AppState.AI_IMPROVE]
+
 ## Enables the Drive/AI buttons only when a valid track exists
 func update_drive_buttons():
 	btn_drive.disabled = not has_valid_track
@@ -178,16 +189,17 @@ func _process(delta):
 			main_vbox.show()
 		ui_menu.visible = !ui_menu.visible
 		
-		if current_state in [AppState.DRIVING, AppState.AI_NEW, AppState.AI_IMPROVE]:
+		if is_telemetry_mode():
 			telemetry_layer.visible = not ui_menu.visible
-		
+
 	# Update the lap timer string if a valid lap is currently underway
-	if current_state == AppState.DRIVING and lap_started:
+	# (runs for the player car in DRIVING and for the AI car in AI modes)
+	if is_telemetry_mode() and lap_started:
 		lap_timer += delta
 		lbl_current.text = "Time: " + format_time(lap_timer)
 
-	# Feed live driver inputs to the input HUD while driving
-	if current_state == AppState.DRIVING and telemetry_layer.visible and active_car and is_instance_valid(active_car):
+	# Feed live inputs to the input HUD whenever a car is driving (manual or AI)
+	if is_telemetry_mode() and telemetry_layer.visible and active_car and is_instance_valid(active_car):
 		input_telemetry.steer = active_car.input_steer
 		input_telemetry.throttle = active_car.input_throttle
 
@@ -616,6 +628,21 @@ func setup_telemetry_ui():
 		vbox.add_child(l)
 		lbl_sectors.append(l)
 
+	# AI / GA section — its own labels so the lap timer above keeps working for the AI car
+	ai_info_box = VBoxContainer.new()
+	vbox.add_child(ai_info_box)
+	ai_info_box.add_child(HSeparator.new())
+	var lbl_ai_title = Label.new()
+	lbl_ai_title.text = "── AI Mode ──"
+	ai_info_box.add_child(lbl_ai_title)
+	lbl_ai_gen = Label.new()
+	lbl_ai_best = Label.new()
+	lbl_ai_status = Label.new()
+	ai_info_box.add_child(lbl_ai_gen)
+	ai_info_box.add_child(lbl_ai_best)
+	ai_info_box.add_child(lbl_ai_status)
+	ai_info_box.hide()
+
 	# Input HUD (steering + pedals), anchored bottom-left
 	input_telemetry = InputTelemetry.new()
 	input_telemetry.custom_minimum_size = Vector2(250, 170)
@@ -975,6 +1002,7 @@ func _on_btn_drive_pressed():
 	personal_best_lap = INF
 	personal_best_sectors = [INF, INF, INF]
 	reset_telemetry_ui()
+	ai_info_box.hide()			# Manual drive: GA readout not relevant
 	telemetry_layer.show()
 
 func _on_btn_ai_new_pressed():
@@ -1092,16 +1120,13 @@ func _launch_python(mode: String) -> void:
 	var main_py    := _ai_path("pythonAI/main.py")
 	if not FileAccess.file_exists(python_exe) or not FileAccess.file_exists(main_py):
 		push_warning("AI: Python executable or main.py not found.")
-		lbl_last.text = "Status: Python not found"
+		lbl_ai_status.text = "Status: Python not found"
 		return
 	ai_pid = OS.create_process(python_exe, [main_py, "--mode", mode])
 	print("AI process launched  PID=", ai_pid, "  mode=", mode)
 
-## Repurposes the existing telemetry labels for AI-mode display.
-## lbl_current → generation counter
-## lbl_delta   → best estimated lap time
-## lbl_last    → status string
-## lbl_best    → static "AI Mode" title
+## Shows the AI/GA readout in its own labels, leaving the lap-timing labels free
+## so the real lap timer can still time the AI car once it starts driving.
 func _setup_ai_mode_ui(status_text: String) -> void:
 	# Create the racing-line overlay if it doesn't exist yet
 	if not ai_racing_line_node or not is_instance_valid(ai_racing_line_node):
@@ -1113,16 +1138,19 @@ func _setup_ai_mode_ui(status_text: String) -> void:
 		ai_racing_line_node.closed = true
 		add_child(ai_racing_line_node)
 
-	# Repurpose existing labels — no new nodes added
-	lbl_best.text    = "── AI Mode ──"
-	lbl_current.text = "Gen: 0"
-	lbl_delta.text   = "Best: --:--.---"
-	lbl_last.text    = "Status: " + status_text
-	for i in range(lbl_sectors.size()):
-		lbl_sectors[i].text = ""
+	# Fresh lap-timing panel so the AI car's laps are timed from zero
+	lap_started = false
+	lap_timer = 0.0
+	personal_best_lap = INF
+	personal_best_sectors = [INF, INF, INF]
+	reset_telemetry_ui()
 
-	# Clear colour overrides so labels are white by default
-	for lbl in [lbl_best, lbl_current, lbl_delta, lbl_last]:
+	# Dedicated GA labels (separate from the lap timer)
+	ai_info_box.show()
+	lbl_ai_gen.text    = "Gen: 0"
+	lbl_ai_best.text   = "GA Best: --:--.---"
+	lbl_ai_status.text = "Status: " + status_text
+	for lbl in [lbl_ai_gen, lbl_ai_best, lbl_ai_status]:
 		lbl.remove_theme_color_override("font_color")
 
 	telemetry_layer.show()
@@ -1170,9 +1198,9 @@ func _on_ai_poll() -> void:
 	# Only refresh the HUD when new generation data arrives
 	if gen != ai_last_read_gen:
 		ai_last_read_gen = gen
-		lbl_current.text = "Gen: %d / %d" % [gen + 1, total]
-		lbl_delta.text   = "Best: " + format_time(best)
-		lbl_last.text    = "Status: " + ("Complete!" if status == "complete" else "Evolving…")
+		lbl_ai_gen.text    = "Gen: %d / %d" % [gen + 1, total]
+		lbl_ai_best.text   = "GA Best: " + format_time(best)
+		lbl_ai_status.text = "Status: " + ("Complete!" if status == "complete" else "Evolving…")
 
 		if data.has("waypoints"):
 			_update_ai_racing_line(data["waypoints"])
@@ -1196,8 +1224,8 @@ func _update_ai_racing_line(waypoints_array: Array) -> void:
 ## Spawns the car and puts it in command-replay mode to drive the best line.
 func _on_ai_complete(data: Dictionary) -> void:
 	print("AI training complete — spawning AI car.")
-	lbl_last.text = "Status: Complete!"
-	lbl_last.add_theme_color_override("font_color", Color.GREEN)
+	lbl_ai_status.text = "Status: Complete!"
+	lbl_ai_status.add_theme_color_override("font_color", Color.GREEN)
 
 	# Prefer the richer "commands" array (new format, includes speed/heading);
 	# fall back to bare "waypoints" if this is an old-format JSON.
@@ -1264,6 +1292,13 @@ func _spawn_ai_car(commands_array: Array) -> void:
 	active_car.look_at(path_pts[last_idx])
 
 	active_car.ai_mode = true
+
+	# Reset lap timing so the AI car's first lap is timed from a clean slate
+	lap_started = false
+	lap_timer = 0.0
+	personal_best_lap = INF
+	personal_best_sectors = [INF, INF, INF]
+	reset_telemetry_ui()
 
 	# Camera follows AI car
 	var car_cam := active_car.get_node_or_null("Camera2D")
