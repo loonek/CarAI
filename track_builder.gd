@@ -1025,8 +1025,10 @@ func _on_btn_ai_improve_pressed():
 func _ai_path(relative: String) -> String:
 	return ProjectSettings.globalize_path("res://").trim_suffix("/") + "/" + relative
 
-## Exports the current track's centreline to pythonAI/track_data.json so that
-## the Python GA can read it. Format matches the schema in pythonAI/track.py.
+## Exports the current track to pythonAI/track_data.json so the Python GA can read it.
+## Exports outer_boundary and inner_boundary at the true driveable track edge
+## (corridor_radius = track_width/2 + kerb_width = 25 px), matching the same radius
+## that TrackSurface.build() and active_car.track_limit use for grass detection.
 func export_track_to_json() -> void:
 	if not track_curve:
 		return
@@ -1034,13 +1036,39 @@ func export_track_to_json() -> void:
 	var centerline := []
 	for p: Vector2 in baked:
 		centerline.append([p.x, p.y])
+
+	# corridor_radius = the driveable half-width, identical to what TrackSurface uses.
+	var corridor_radius: float = (track_width / 2.0) + kerb_width
+
+	# Geometry2D.offset_polygon expects clockwise winding.
+	var poly_points := baked.duplicate()
+	if not Geometry2D.is_polygon_clockwise(poly_points):
+		poly_points.reverse()
+
+	var outer_polys := Geometry2D.offset_polygon(poly_points, corridor_radius, Geometry2D.JOIN_ROUND)
+	var inner_polys := Geometry2D.offset_polygon(poly_points, -corridor_radius, Geometry2D.JOIN_ROUND)
+
+	var outer_boundary := []
+	if outer_polys.size() > 0:
+		for p: Vector2 in outer_polys[0]:
+			outer_boundary.append([p.x, p.y])
+
+	var inner_boundary := []
+	if inner_polys.size() > 0:
+		for p: Vector2 in inner_polys[0]:
+			inner_boundary.append([p.x, p.y])
+
 	var payload := {
-		"version": 1,
+		"version": 2,
 		"wall_dist_px": wall_dist,
 		"track_width_px": track_width,
 		"kerb_width_px": kerb_width,
+		"track_edge_dist_px": corridor_radius,
 		"pixels_per_meter": 10.0,
 		"centerline": centerline,
+		"outer_boundary": outer_boundary,
+		"inner_boundary": inner_boundary,
+		"coordinate_system": "godot",
 	}
 	var path := _ai_path("pythonAI/track_data.json")
 	var file := FileAccess.open(path, FileAccess.WRITE)

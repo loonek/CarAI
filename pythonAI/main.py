@@ -240,9 +240,10 @@ def main() -> None:
     print()
     track = load_track()
     print()
-    print(f"  Track source : {track.source}")
-    print(f"  Track length : {track.total_length_m:.1f} m  ({track.total_length_px:.0f} px)")
-    print(f"  Wall distance: ±{track.wall_dist_m:.1f} m  ({track.wall_dist_px:.0f} px)")
+    print(f"  Track source   : {track.source}")
+    print(f"  Track length   : {track.total_length_m:.1f} m  ({track.total_length_px:.0f} px)")
+    print(f"  Corridor width : ±{track.corridor_radius_px / config.PIXELS_PER_METER:.1f} m"
+          f"  ({track.corridor_radius_px:.0f} px)  ← driveable surface")
     print()
 
     # 2. Build initial population

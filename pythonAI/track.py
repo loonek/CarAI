@@ -5,15 +5,22 @@ Coordinate convention: Godot Y-down pixel space throughout.
 Physics modules receive distances/curvatures and scale to metres via PIXELS_PER_METER;
 there is no coordinate-axis flip — curvature is orientation-agnostic.
 
-JSON schema written by Godot (track_data.json):
+JSON schema written by Godot (track_data.json), v2:
   {
-    "version": 1,
-    "wall_dist_px": 60.0,
+    "version": 2,
+    "wall_dist_px": 60.0,           # physical wall distance (info only)
     "track_width_px": 30.0,
     "kerb_width_px": 10.0,
+    "track_edge_dist_px": 25.0,     # corridor half-width = track_width/2 + kerb_width
     "pixels_per_meter": 10.0,
-    "centerline": [[x, y], ...]     # baked Curve2D points, Y-down pixels
+    "centerline": [[x, y], ...],    # baked Curve2D points, Y-down pixels
+    "outer_boundary": [[x, y], ...],# outer edge of driveable surface (closed polygon)
+    "inner_boundary": [[x, y], ...],# inner edge of driveable surface (closed polygon)
+    "coordinate_system": "godot"    # Y-down pixel space
   }
+
+v1 JSON (legacy, no boundary polygons) is still supported: corridor_radius_px is
+derived from track_width_px and kerb_width_px when track_edge_dist_px is absent.
 """
 
 from __future__ import annotations
@@ -35,14 +42,17 @@ import config
 
 @dataclass
 class Track:
-    centerline: np.ndarray       # (N, 2) pixel coords, Y-down
-    left_boundary: np.ndarray    # (N, 2) pixel coords
-    right_boundary: np.ndarray   # (N, 2) pixel coords
-    wall_dist_px: float
+    centerline: np.ndarray           # (N, 2) pixel coords, Y-down
+    left_boundary: np.ndarray        # (N, 2) inner track edge — gene=0.0 maps here
+    right_boundary: np.ndarray       # (N, 2) outer track edge — gene=1.0 maps here
+    outer_polygon: np.ndarray        # (P, 2) closed outer boundary polygon
+    inner_polygon: Optional[np.ndarray]  # (Q, 2) closed inner boundary polygon or None
+    corridor_radius_px: float        # driveable half-width in pixels (= track_width/2 + kerb_width)
+    wall_dist_px: float              # physical wall distance — retained for visualisation info
     wall_dist_m: float
     total_length_px: float
     total_length_m: float
-    source: str                  # "json" | "synthetic"
+    source: str                      # "json" | "synthetic"
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +79,12 @@ def reconstruct_trajectory(chromosome: np.ndarray, track: Track,
     """
     Convert a chromosome of N lateral offsets in [0, 1] to a 2D trajectory.
 
-    offset = 0.0  →  left_boundary point
-    offset = 1.0  →  right_boundary point
+    offset = 0.0  →  left_boundary point  (inner track edge)
+    offset = 1.0  →  right_boundary point (outer track edge)
+
+    Both boundaries are guaranteed to lie within the driveable corridor
+    (corridor_radius_px from centerline), so every valid gene value places
+    the waypoint on the black track surface.
 
     Returns (M, 2) pixel coordinates via periodic cubic spline interpolation.
     """
@@ -92,6 +106,19 @@ def reconstruct_trajectory(chromosome: np.ndarray, track: Track,
     return np.column_stack([cs_x(t_eval), cs_y(t_eval)])
 
 
+def validate_waypoint(point: np.ndarray, track: Track) -> bool:
+    """
+    Return True if point lies within the driveable corridor.
+
+    Uses distance-to-nearest-centerline-point, consistent with how Godot's
+    TrackSurface raster and car.track_limit check on-track state.
+    A 1e-6 px tolerance absorbs floating-point rounding at the exact boundary.
+    """
+    diffs = point - track.centerline          # (N, 2)
+    min_dist = float(np.linalg.norm(diffs, axis=1).min())
+    return min_dist <= track.corridor_radius_px + 1e-6
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -104,14 +131,42 @@ def _load_from_json(path: Path) -> Track:
     wall_dist_px = float(data.get("wall_dist_px", 60.0))
     ppm = float(data.get("pixels_per_meter", config.PIXELS_PER_METER))
 
+    # Derive the driveable corridor half-width.
+    # v2 JSON: track_edge_dist_px is exported directly by Godot.
+    # v1 JSON: derive from track_width_px and kerb_width_px (both always present).
+    # Fallback: warn and use half of wall_dist (better than using wall_dist itself).
+    if "track_edge_dist_px" in data:
+        corridor_radius_px = float(data["track_edge_dist_px"])
+    elif "track_width_px" in data and "kerb_width_px" in data:
+        corridor_radius_px = float(data["track_width_px"]) / 2.0 + float(data["kerb_width_px"])
+    else:
+        corridor_radius_px = wall_dist_px / 2.0
+        print(f"Warning: track_edge_dist_px missing — using {corridor_radius_px:.1f} px fallback")
+
     centerline = _resample_by_arc_length(raw, config.N_SECTIONS)
-    left, right = _compute_cross_sections(centerline, wall_dist_px)
+    # Cross-section endpoints are at corridor_radius_px from the centerline,
+    # guaranteeing that gene values in [0,1] always land on the black track surface.
+    left, right = _compute_cross_sections(centerline, corridor_radius_px)
     total_px = _arc_length_closed(centerline)
+
+    # Load boundary polygons if present (v2), otherwise approximate from cross-sections.
+    if "outer_boundary" in data and len(data["outer_boundary"]) >= 3:
+        outer_polygon = np.array(data["outer_boundary"], dtype=float)
+    else:
+        outer_polygon = right.copy()
+
+    if "inner_boundary" in data and len(data["inner_boundary"]) >= 3:
+        inner_polygon = np.array(data["inner_boundary"], dtype=float)
+    else:
+        inner_polygon = left.copy()
 
     return Track(
         centerline=centerline,
         left_boundary=left,
         right_boundary=right,
+        outer_polygon=outer_polygon,
+        inner_polygon=inner_polygon,
+        corridor_radius_px=corridor_radius_px,
         wall_dist_px=wall_dist_px,
         wall_dist_m=wall_dist_px / ppm,
         total_length_px=total_px,
@@ -156,13 +211,18 @@ def _generate_synthetic_track(seed: int = 42) -> Track:
     centerline += shift
 
     wall_dist_px = 60.0
-    left, right = _compute_cross_sections(centerline, wall_dist_px)
+    # Use the same default corridor radius as Godot: (30/2) + 10 = 25 px
+    corridor_radius_px = 25.0
+    left, right = _compute_cross_sections(centerline, corridor_radius_px)
     total_px = _arc_length_closed(centerline)
 
     return Track(
         centerline=centerline,
         left_boundary=left,
         right_boundary=right,
+        outer_polygon=right.copy(),
+        inner_polygon=left.copy(),
+        corridor_radius_px=corridor_radius_px,
         wall_dist_px=wall_dist_px,
         wall_dist_m=wall_dist_px / config.PIXELS_PER_METER,
         total_length_px=total_px,
@@ -185,13 +245,15 @@ def _resample_by_arc_length(points: np.ndarray, n: int) -> np.ndarray:
 
 
 def _compute_cross_sections(centerline: np.ndarray,
-                             wall_dist: float) -> tuple[np.ndarray, np.ndarray]:
+                             half_width: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Vectorised: compute left and right boundary points for every cross-section.
 
     The tangent at point i is estimated from its neighbours (central difference,
     wrapping around the closed loop).  The normal is a 90° CCW rotation of
-    the unit tangent.  'left' and 'right' are symmetric about the centreline.
+    the unit tangent.  left and right are symmetric about the centreline at
+    exactly half_width pixels — both are guaranteed on the driveable surface
+    when half_width == corridor_radius_px.
     """
     n = len(centerline)
     prev_i = (np.arange(n) - 1) % n
@@ -206,8 +268,8 @@ def _compute_cross_sections(centerline: np.ndarray,
     # 90° CCW rotation in Godot Y-down space: (tx, ty) → (-ty, tx)
     normals = np.column_stack([-tangents[:, 1], tangents[:, 0]])
 
-    left = centerline + wall_dist * normals
-    right = centerline - wall_dist * normals
+    left = centerline + half_width * normals
+    right = centerline - half_width * normals
     return left, right
 
 

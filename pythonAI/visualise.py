@@ -43,8 +43,8 @@ def plot_track_and_line(track: Track,
     ax.fill(surface[:, 0], surface[:, 1],
             color="#3E3E3E", alpha=0.95, zorder=1)
 
-    # --- Kerb approximation (thin coloured strip just inside each wall) ---
-    kerb_offset = 0.25 * track.wall_dist_px   # visual only
+    # --- Kerb approximation (thin coloured strip at the outer 35% of each side) ---
+    kerb_offset = 0.35 * track.corridor_radius_px   # visual only
     cl = track.centerline
     prev_i = (np.arange(n) - 1) % n
     next_i = (np.arange(n) + 1) % n
@@ -54,9 +54,9 @@ def plot_track_and_line(track: Track,
     tangents /= norms
     normals = np.column_stack([-tangents[:, 1], tangents[:, 0]])
 
-    outer_kerb_in = cl + (track.wall_dist_px - kerb_offset) * normals
+    outer_kerb_in = cl + (track.corridor_radius_px - kerb_offset) * normals
     outer_kerb_out = left
-    inner_kerb_in = cl - (track.wall_dist_px - kerb_offset) * normals
+    inner_kerb_in = cl - (track.corridor_radius_px - kerb_offset) * normals
     inner_kerb_out = right
 
     for a_in, a_out in [(outer_kerb_in, outer_kerb_out),
@@ -118,7 +118,8 @@ def plot_track_and_line(track: Track,
     info = (
         f"Source : {track.source}\n"
         f"Length : {track.total_length_m:.1f} m  ({track.total_length_px:.0f} px)\n"
-        f"Wall   : ±{track.wall_dist_m:.1f} m  ({track.wall_dist_px:.0f} px)\n"
+        f"Corridor: ±{track.corridor_radius_px / config.PIXELS_PER_METER:.1f} m"
+        f"  ({track.corridor_radius_px:.0f} px)\n"
         f"N sections : {n}\n"
         f"Pop / Gens : {config.POPULATION_SIZE} / {config.GENERATIONS}"
     )

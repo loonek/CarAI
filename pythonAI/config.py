@@ -46,6 +46,13 @@ N_TRAJECTORY = 150
 # ---------------------------------------------------------------------------
 # Boundary penalty
 # ---------------------------------------------------------------------------
-# Seconds added per metre that a trajectory point violates the wall distance.
+# Minimum speed the car is ever told to target (m/s).
+# Prevents near-zero corner speeds from curvature singularities or spline overshoot.
+MIN_SPEED = 2.0
+
+# Seconds added per metre that a trajectory point violates the corridor edge.
 # Large enough to dominate any valid lap time (~30–120 s range).
 BOUNDARY_PENALTY_PER_METER = 500.0
+# Flat seconds added per trajectory point that falls outside the driveable corridor.
+# Applied on top of the per-metre gradient penalty so even a tiny excursion is fatal.
+OFFTRACK_PENALTY = 1000.0

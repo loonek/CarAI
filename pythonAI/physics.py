@@ -9,7 +9,7 @@ Pipeline for each chromosome:
   5. Backward pass: enforce MAX_DECEL so the car can actually brake in time
   6. Steps 4-5 repeated SPEED_PROFILE_PASSES times for closed-loop convergence
   7. Lap time = Σ  ds_m / v_avg
-  8. Boundary penalty added for any spline point outside wall_dist from centreline
+  8. Boundary penalty added for any spline point outside corridor_radius_px from centreline
 
 All geometry is in pixel space (Y-down); curvature and distances are scaled
 to metres via config.PIXELS_PER_METER before physics formulae are applied.
@@ -109,6 +109,10 @@ def compute_speed_profile(trajectory: np.ndarray) -> tuple[np.ndarray, np.ndarra
             if v[i] > v_brake:
                 v[i] = v_brake
 
+    # Floor: prevent near-zero targets from curvature singularities or spline
+    # overshoot — the car must never be commanded to stop on the racing line.
+    v = np.maximum(v, config.MIN_SPEED)
+
     return v, ds_m
 
 
@@ -125,20 +129,26 @@ def estimate_lap_time(v: np.ndarray, ds_m: np.ndarray) -> float:
 
 def compute_boundary_penalty(trajectory: np.ndarray, track: Track) -> float:
     """
-    Add a penalty (in seconds) for every trajectory point that lies further
-    than wall_dist_px from the nearest centreline point.
+    Penalty (in seconds) for trajectory points outside the driveable corridor.
 
-    Uses the same distance measure as Godot's track-limit check in car.gd.
-    Fully vectorised: O(M * N) but with small constants.
+    Threshold is corridor_radius_px — the same half-width Godot's TrackSurface
+    and car.track_limit use to decide on-track vs grass.  Two components:
+    - Gradient: BOUNDARY_PENALTY_PER_METER × excess metres per off-track point
+    - Flat:     OFFTRACK_PENALTY per off-track point (ensures even tiny excursions
+                dominate the fitness score)
+
+    Fully vectorised: O(M × N) with small constants.
     """
     # (M, 1, 2) - (1, N, 2) → (M, N, 2)
     diffs = trajectory[:, np.newaxis, :] - track.centerline[np.newaxis, :, :]
     min_dists_px = np.linalg.norm(diffs, axis=2).min(axis=1)   # (M,)
 
-    violations_px = np.maximum(0.0, min_dists_px - track.wall_dist_px)
+    violations_px = np.maximum(0.0, min_dists_px - track.corridor_radius_px)
     violations_m = violations_px / config.PIXELS_PER_METER
 
-    return float(config.BOUNDARY_PENALTY_PER_METER * violations_m.sum())
+    gradient_penalty = float(config.BOUNDARY_PENALTY_PER_METER * violations_m.sum())
+    flat_penalty = float(config.OFFTRACK_PENALTY * (violations_px > 0.0).sum())
+    return gradient_penalty + flat_penalty
 
 
 # ---------------------------------------------------------------------------
