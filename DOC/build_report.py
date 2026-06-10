@@ -82,10 +82,8 @@ P("Genetic Algorithm Optimisation of a Racing Line", sub_s)
 SP(30)
 P("Oliwier Zasadni &amp; Miko&#322;aj Kimak", auth_s)
 SP(12)
-P("Course project &#8212; Artificial Intelligence / Evolutionary Computation", sub_s)
+P("Course project &#8212; Biologically Inspired Artificial Intelligence", sub_s)
 P("Silesian University of Technology (Politechnika &#346;l&#261;ska)", sub_s)
-SP(20)
-P("2025 / 2026", sub_s)
 story.append(PageBreak())
 
 # =========================================================================
