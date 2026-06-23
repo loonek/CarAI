@@ -1022,7 +1022,7 @@ func _on_btn_ai_new_pressed():
 	_start_ai_poll_timer()
 
 func _on_btn_ai_improve_pressed():
-	if not FileAccess.file_exists(_ai_path("pythonAI/results/best_line.json")):
+	if not FileAccess.file_exists(_data_path("results/best_line.json")):
 		# No saved line — show message in the HUD briefly, don't crash
 		_setup_ai_mode_ui("No saved line to improve.")
 		telemetry_layer.show()
@@ -1048,12 +1048,18 @@ func _on_btn_ai_improve_pressed():
 # AI integration helpers
 # =============================================================================
 
-## Returns the absolute path to a file relative to the project root.
+## Returns the absolute path to a file relative to the project root (res:// = IMPL/).
 ## Safe whether globalize_path returns a trailing slash or not.
 func _ai_path(relative: String) -> String:
 	return ProjectSettings.globalize_path("res://").trim_suffix("/") + "/" + relative
 
-## Exports the current track to pythonAI/track_data.json so the Python GA can read it.
+## Returns the absolute path to a file under the sibling <repo>/DATA/ folder.
+## res:// resolves to <repo>/IMPL, so DATA is one directory up.
+func _data_path(relative: String) -> String:
+	var impl := ProjectSettings.globalize_path("res://").trim_suffix("/")
+	return impl.get_base_dir() + "/DATA/" + relative
+
+## Exports the current track to DATA/track_data.json so the Python GA can read it.
 ## Exports outer_boundary and inner_boundary at the true driveable track edge
 ## (corridor_radius = track_width/2 + kerb_width = 25 px), matching the same radius
 ## that TrackSurface.build() and active_car.track_limit use for grass detection.
@@ -1098,7 +1104,7 @@ func export_track_to_json() -> void:
 		"inner_boundary": inner_boundary,
 		"coordinate_system": "godot",
 	}
-	var path := _ai_path("pythonAI/track_data.json")
+	var path := _data_path("track_data.json")
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(payload))
@@ -1175,7 +1181,7 @@ func _stop_ai_poll_timer() -> void:
 
 ## Called every 0.5 s — reads current_best.json and updates the HUD / racing line.
 func _on_ai_poll() -> void:
-	var path := _ai_path("pythonAI/results/current_best.json")
+	var path := _data_path("results/current_best.json")
 	var file := FileAccess.open(path, FileAccess.READ)
 	if not file:
 		return  # File not written yet

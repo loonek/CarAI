@@ -13,7 +13,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
-GRAPHS = r"D:\GithubRepos\CarAI\pythonAI\results\graphs"
+GRAPHS = r"D:\GithubRepos\CarAI\DATA\results\graphs"
 OUT_DIR = r"D:\GithubRepos\CarAI\DOC"
 os.makedirs(OUT_DIR, exist_ok=True)
 OUT = os.path.join(OUT_DIR, "Report.pdf")

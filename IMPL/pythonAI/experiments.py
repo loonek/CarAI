@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 
 SEEDS        = [42, 123, 7]
-GRAPHS_DIR   = Path(__file__).parent / "results" / "graphs"
+GRAPHS_DIR   = config.RESULTS_DIR / "graphs"
 
 CROSSOVER_TYPES  = ["single_point", "multi_point", "uniform"]
 CROSSOVER_LABELS = ["Crossover: Single Point", "Crossover: Multi Point", "Crossover: Uniform"]

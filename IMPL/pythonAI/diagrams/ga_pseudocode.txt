@@ -1,0 +1,280 @@
+================================================================================
+  ALGORITHM 1: Genetic Algorithm for Racing Line Optimisation
+  (matches ga_flowchart.py — Fig. 1)
+================================================================================
+
+  SOURCE FILES : pythonAI/genetic.py, pythonAI/physics.py, pythonAI/main.py
+  CONFIG FILE  : pythonAI/config.py
+
+  PARAMETERS
+    POPULATION_SIZE  = 100        // individuals per generation
+    N_SECTIONS       = 50         // genes per chromosome (cross-sections)
+    N_TRAJECTORY     = 150        // spline evaluation points for physics
+    GENERATIONS      = 200        // total iterations
+    MUTATION_RATE    = 0.10       // per-gene mutation probability  (p_m)
+    SIGMA            = 0.05       // Gaussian mutation std dev
+    TOURNAMENT_SIZE  = 5          // candidates per tournament selection
+    ELITISM_COUNT    = 2          // elite individuals carried unchanged
+    BOUNDARY_PENALTY_PER_METER = 500.0   // s / m of corridor violation
+    OFFTRACK_PENALTY           = 1000.0  // s per off-corridor point (flat)
+    MU               = 0.7        // tyre friction coefficient
+    G                = 9.81       // m/s²
+    MAX_ACCEL        = 8.0        // m/s²  (longitudinal acceleration cap)
+    MAX_DECEL        = 15.0       // m/s²  (braking cap)
+    MAX_SPEED        = 80.0       // m/s   (hard speed ceiling)
+    SPEED_PROFILE_PASSES = 3      // forward+backward convergence sweeps
+    PIXELS_PER_METER = 10.0       // coordinate scale
+
+  INPUT
+    track_data.json   written by Godot — contains baked Curve2D centerline,
+                      outer_boundary, inner_boundary, corridor_radius_px
+    --mode            "new" (random start) | "improve" (seed from saved best)
+
+  OUTPUT
+    best_line.json    racing line: chromosome, waypoints, speed/heading/
+                      throttle/brake commands per point
+    current_best.json live update every generation for Godot HUD polling
+
+  NOTE ON FITNESS
+    The fitness function has NO forbidden-zone penalty.  The only penalty is
+    the boundary penalty (distance from centreline > corridor_radius_px).
+    Chromosome genes in [0, 1] always map onto the driveable corridor via
+    the cross-section lerp, so valid genes never trigger the penalty.
+
+  NOTE ON CROSSOVER
+    The default crossover is uniform (each gene independently drawn from
+    either parent with equal probability).  single_point and multi_point
+    variants exist in genetic.py for the experiments runner.  Each crossover
+    call produces ONE child (not two).
+
+────────────────────────────────────────────────────────────────────────────────
+
+ALGORITHM GeneticAlgorithmRacingLine(track, mode):
+
+  // ── Initialisation ─────────────────────────────────────────────────────
+
+  1.  IF mode == "improve" AND best_line.json EXISTS:
+          saved_chrom ← load_chromosome(best_line.json)
+          population[0] ← saved_chrom                              // exact elite seed
+          FOR i ← 1 TO POPULATION_SIZE - 1:
+              population[i] ← clip(saved_chrom + N(0, 0.10), 0.0, 1.0)
+      ELSE:
+          FOR i ← 0 TO POPULATION_SIZE - 1:
+              population[i] ← random vector of N_SECTIONS genes ~ Uniform(0, 1)
+
+  2.  best_chromosome ← population[0]
+  3.  best_fitness    ← +∞
+
+  // ── Main generation loop ───────────────────────────────────────────────
+
+  4.  FOR generation ← 0 TO GENERATIONS - 1:
+
+  5.      // Evaluate fitness for every individual
+          FOR EACH individual IN population:
+              trajectory     ← reconstruct_trajectory(individual, track)
+                  // periodic cubic spline through N_SECTIONS waypoints
+                  // waypoint_i = left_boundary[i] + gene_i × (right_boundary[i] − left_boundary[i])
+                  // evaluated at N_TRAJECTORY evenly-spaced arc-length positions
+              v, ds_m        ← compute_speed_profile(trajectory)
+                  // v_corner[i]  = √(MU × G × R[i])  (Menger curvature formula)
+                  // forward pass:  v[j]  = min(v[j],  √(v[i]² + 2·MAX_ACCEL·ds[i]))
+                  // backward pass: v[i]  = min(v[i],  √(v[j]² + 2·MAX_DECEL·ds[i]))
+                  //                        (repeated SPEED_PROFILE_PASSES = 3 times each)
+                  // floor: v = max(v, MIN_SPEED = 2.0 m/s)
+              lap_time       ← Σ ds_m[i] / (0.5 × (v[i] + v[i+1]))
+              boundary_pen   ← BOUNDARY_PENALTY_PER_METER × Σ max(0, dist_from_centreline − corridor_radius) / PPM
+                             + OFFTRACK_PENALTY × count(dist_from_centreline > corridor_radius)
+              fitness[individual] ← lap_time + boundary_pen
+
+  6.      // Track running best across all generations
+          gen_best_idx ← argmin(fitness)
+          IF fitness[gen_best_idx] < best_fitness:
+              best_fitness    ← fitness[gen_best_idx]
+              best_chromosome ← population[gen_best_idx]
+
+  7.      // Live update for Godot's 0.5 s polling timer
+          write current_best.json atomically:
+              { generation, total_generations, best_time = best_fitness,
+                status = "evolving",
+                waypoints = reconstruct_trajectory(best_chromosome, track) }
+              (write to .tmp file, then rename — prevents partial reads)
+
+  8.      // Build next generation
+          elite_indices ← argsort(fitness)[ :ELITISM_COUNT ]      // top 2 by lowest fitness
+          new_pop ← [ population[i] FOR i IN elite_indices ]      // carry elites unchanged
+
+  9.      WHILE |new_pop| < POPULATION_SIZE:
+
+  10.         p1 ← tournament_select(population, fitness, k = TOURNAMENT_SIZE)
+  11.         p2 ← tournament_select(population, fitness, k = TOURNAMENT_SIZE)
+
+  12.         // Uniform crossover (default) — one child per call
+              child ← uniform_crossover(p1, p2)
+                  // FOR EACH gene i: child[i] = p1[i] IF rand() < 0.5 ELSE p2[i]
+
+  13.         child ← mutate(child)
+
+  14.         new_pop ← new_pop + { child }
+
+  15.     population ← new_pop
+
+  // ── Final pass (captures any improvement from last breed step) ─────────
+
+  16. FOR EACH individual IN population:
+          fitness[individual] ← evaluate(individual, track)       // reuses step 5
+      final_best_idx ← argmin(fitness)
+      IF fitness[final_best_idx] < best_fitness:
+          best_fitness    ← fitness[final_best_idx]
+          best_chromosome ← population[final_best_idx]
+
+  17. RETURN best_chromosome, best_fitness
+
+  // ── Output (main.py) ──────────────────────────────────────────────────
+
+  18. best_trajectory ← reconstruct_trajectory(best_chromosome, track)
+  19. v, ds_m         ← compute_speed_profile(best_trajectory)
+  20. commands        ← compute_commands(best_trajectory, v, ds_m)
+          // FOR EACH point i:
+          //   heading[i]  = atan2(dy, dx)  (Y-down, Godot convention)
+          //   accel       = (v[i+1]² − v[i]²) / (2 × ds_m[i])
+          //   throttle[i] = clip(accel / MAX_ACCEL, 0, 1)
+          //   brake[i]    = clip(−accel / MAX_DECEL, 0, 1)
+          //   speed_pxs   = v[i] × PIXELS_PER_METER
+
+  21. write best_line.json:
+          { version=2, lap_time_seconds, generation_count, population_size,
+            pixels_per_meter, chromosome[ ], racing_line[ ], commands[ ] }
+
+  22. write current_best.json (final, atomic):
+          { …, status = "complete", commands[ ] }
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION tournament_select(population, fitness, k):
+    candidates ← k random indices (without replacement) from population
+    winner     ← candidate with MINIMUM fitness
+    RETURN population[winner]
+
+FUNCTION uniform_crossover(p1, p2):
+    FOR EACH gene index i:
+        child[i] ← p1[i]  IF rand() < 0.5  ELSE p2[i]
+    RETURN child
+
+FUNCTION mutate(chromosome):
+    FOR EACH gene d_i IN chromosome:
+        IF rand() < MUTATION_RATE:
+            d_i ← d_i + gaussian(0, SIGMA)
+            d_i ← clip(d_i, 0.0, 1.0)
+    RETURN chromosome
+
+================================================================================
+  ALGORITHM 2: Godot Integration Loop
+  (matches system_architecture.py — Fig. 2)
+================================================================================
+
+  SOURCE FILES : track_builder.gd, car.gd
+  SHARED FILES :
+    pythonAI/track_data.json       Godot → Python  (written before launch)
+    pythonAI/results/current_best.json  Python → Godot  (polled every 0.5 s)
+    pythonAI/results/best_line.json     Python → Godot  (final output)
+
+────────────────────────────────────────────────────────────────────────────────
+
+ON_BUTTON_PRESS(mode ∈ {"new", "improve"}):
+
+  // Guard: Improve requires a saved line
+  1.  IF mode == "improve" AND best_line.json NOT EXISTS:
+          show_hud("No saved line to improve")
+          RETURN
+
+  // Tear down any previous run
+  2.  IF ai_pid ≥ 0:
+          OS.kill(ai_pid)
+          ai_pid ← -1
+
+  // Export current track geometry
+  3.  baked_points ← track_curve.get_baked_points()      // Curve2D baked polyline
+  4.  centerline   ← baked_points as [[x,y], …]
+  5.  corridor_radius ← track_width / 2 + kerb_width     // = 25 px by default
+  6.  outer_boundary ← Geometry2D.offset_polygon(baked_points, +corridor_radius)
+  7.  inner_boundary ← Geometry2D.offset_polygon(baked_points, −corridor_radius)
+  8.  write pythonAI/track_data.json:
+          { version=2, wall_dist_px, track_width_px, kerb_width_px,
+            track_edge_dist_px = corridor_radius, pixels_per_meter = 10.0,
+            centerline, outer_boundary, inner_boundary,
+            coordinate_system = "godot" }
+
+  // Launch Python GA
+  9.  ai_pid ← OS.create_process(
+          "pythonAI/.venv/bin/python3",
+          ["pythonAI/main.py", "--mode", mode]
+      )
+
+  // Start poll timer
+  10. ai_poll_timer.wait_time ← 0.5
+  11. ai_poll_timer.start()
+
+────────────────────────────────────────────────────────────────────────────────
+
+ON_POLL_TIMER_TIMEOUT():    // fires every 0.5 s
+
+  12. data ← JSON.parse(read "pythonAI/results/current_best.json")
+      IF data NOT VALID: RETURN                       // file not yet written
+
+  13. IF data.generation ≠ ai_last_read_gen:
+          ai_last_read_gen ← data.generation
+          update_hud(data.generation, data.best_time, data.status)
+          redraw_racing_line_overlay(data.waypoints)  // cyan Line2D
+
+  14. IF data.status == "evolving":
+          _ga_ever_evolved ← true
+
+  15. IF data.status == "complete" AND _ga_ever_evolved:
+          ai_poll_timer.stop()
+          ai_pid ← -1
+          ON_AI_COMPLETE(data)
+
+────────────────────────────────────────────────────────────────────────────────
+
+ON_AI_COMPLETE(data):
+
+  16. commands ← data.commands            // [{position, speed_pxs, heading,
+                                          //   throttle, brake}, …]
+
+  17. spawn car (car_scene.instantiate())
+      scale car physics to track_width
+      car.ai_waypoints ← positions from commands
+      car.ai_speeds    ← speed_pxs values from commands
+      car.ai_headings  ← heading values from commands
+      car.ai_mode      ← true
+
+  18. EVERY PHYSICS FRAME (car._physics_process):
+
+      // Advance waypoint index
+      19. WHILE distance(car_pos, ai_waypoints[target_idx]) < WAYPOINT_THRESHOLD = 20 px:
+              target_idx ← target_idx + 1
+
+      // Speed control
+      20. current_speed ← velocity.length()
+          target_speed  ← ai_speeds[target_idx]
+          IF current_speed < target_speed × (1 − SPEED_BLEND):
+              ai_throttle ← +1.0          // full gas
+          ELSE IF current_speed > target_speed × (1 + SPEED_BLEND):
+              ai_throttle ← −1.0          // full brake (input_throttle < 0 → braking)
+          ELSE:
+              ai_throttle ← 0.0           // coast
+
+      // Pure-pursuit steering
+      21. lookahead ← max(MIN_LOOKAHEAD = 30 px, current_speed × LOOKAHEAD_TIME = 0.4 s)
+          look_idx  ← advance forward until distance ≥ lookahead
+                       (capped at LOOKAHEAD_WINDOW = 25 steps)
+          local_target ← to_local(ai_waypoints[look_idx])
+                          // car-local space: x = forward, y = right
+          steer_angle  ← atan2(local_target.y, local_target.x)
+          ai_steering  ← clip(steer_angle / MAX_STEER_ANGLE, −1.0, 1.0)
+
+      22. // ai_throttle and ai_steering are copied into input_throttle / _raw_steer
+          // and processed by the SAME apply_longitudinal + apply_steering functions
+          // used for manual driving — no separate AI physics path
+
+================================================================================

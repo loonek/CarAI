@@ -1,11 +1,13 @@
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Paths — all relative to this file so the project works on any machine
+# Paths — all relative to this file so the project works on any machine.
+# Layout:  <repo>/IMPL/pythonAI/  (sources)   <repo>/DATA/  (datasets + results)
 # ---------------------------------------------------------------------------
-PYTHON_AI_DIR = Path(__file__).parent
-RESULTS_DIR = PYTHON_AI_DIR / "results"
-TRACK_DATA_PATH = PYTHON_AI_DIR / "track_data.json"   # written by Godot
+PYTHON_AI_DIR = Path(__file__).parent                  # <repo>/IMPL/pythonAI
+DATA_DIR = PYTHON_AI_DIR.parent.parent / "DATA"        # <repo>/DATA
+RESULTS_DIR = DATA_DIR / "results"
+TRACK_DATA_PATH = DATA_DIR / "track_data.json"         # written by Godot
 BEST_LINE_JSON = RESULTS_DIR / "best_line.json"        # read by Godot
 BEST_LINE_PNG = RESULTS_DIR / "best_line.png"
 CURRENT_BEST_JSON = RESULTS_DIR / "current_best.json" # polled every 0.5 s by Godot
