@@ -1,0 +1,120 @@
+================================================================================
+  ALGORITHM 1: Genetic Algorithm for Racing Line Optimisation
+  Evolves a population of candidate racing lines to minimise lap time
+  while keeping the car within the track corridor.
+================================================================================
+
+  PARAMETERS
+    P     — population size
+    G     — number of generations
+    p_m   — per-gene mutation probability
+    σ     — Gaussian mutation standard deviation
+    k     — tournament size (candidates per selection event)
+
+  INPUT   : track geometry (centerline, corridor boundaries), mode ∈ {new, improve}
+  OUTPUT  : optimised racing line and per-waypoint driving commands
+
+────────────────────────────────────────────────────────────────────────────────
+
+ALGORITHM GeneticAlgorithmRacingLine(track, mode):
+
+  // Initialise: warm-start from a saved line, or seed randomly
+  1.  IF mode == "improve" AND saved line exists:
+          population ← saved chromosome + small perturbations for remaining slots
+      ELSE:
+          population ← P random chromosomes, each gene drawn uniformly in [0, 1]
+
+  2.  best_chromosome ← null,  best_fitness ← +∞
+
+  // Main evolutionary loop
+  3.  FOR generation ← 1 TO G:
+
+  4.      FOR EACH individual IN population:
+              reconstruct trajectory from chromosome
+              compute speed profile along trajectory
+              fitness ← estimated lap time + boundary violation penalty
+
+  5.      IF any individual improves best_fitness: update best_chromosome
+
+  6.      publish live update so Godot can display the current best line
+
+  7.      new_pop ← elite individuals carried forward unchanged   // never lose the best found
+
+  8.      WHILE |new_pop| < P:
+              child ← uniform_crossover(tournament_select(), tournament_select())
+              new_pop ← new_pop + { mutate(child) }
+
+  9.      population ← new_pop
+
+  // Final pass captures any improvement produced in the last generation
+  10. re-evaluate all individuals; update best_chromosome if improved
+
+  11. reconstruct trajectory and compute driving commands for best_chromosome
+  12. write final racing line and commands to output files
+
+  13. RETURN best_chromosome, best_fitness
+
+────────────────────────────────────────────────────────────────────────────────
+
+FUNCTION tournament_select(population, fitness):
+    // Best of k random candidates — balances selection pressure with diversity
+    RETURN individual with lowest fitness among k randomly sampled candidates
+
+FUNCTION uniform_crossover(p1, p2):
+    // Each gene is inherited independently from either parent with equal probability
+    FOR EACH gene i: child[i] ← p1[i] OR p2[i] chosen at random
+    RETURN child
+
+FUNCTION mutate(chromosome):
+    // Randomly perturb each gene to explore nearby solutions
+    FOR EACH gene: IF rand() < p_m: add Gaussian noise N(0, σ), clamp to valid range
+    RETURN chromosome
+
+================================================================================
+  ALGORITHM 2: Godot Integration Loop
+  Ties the Godot simulator to the Python GA — exporting the track, running the
+  optimiser in the background, visualising progress, and driving the car on
+  completion.
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+
+ON_BUTTON_PRESS(mode ∈ {new, improve}):
+
+  1.  IF mode == "improve" AND no saved line exists: report error; RETURN
+
+  2.  IF a GA process is already running: kill it
+
+  3.  export track geometry (centerline, corridor boundaries) to shared file
+
+  4.  launch Python GA as a background subprocess with selected mode
+
+  5.  start polling timer at interval Δt   // Godot checks for updates periodically
+
+────────────────────────────────────────────────────────────────────────────────
+
+ON_POLL_TIMER_TIMEOUT():   // fires every Δt
+
+  6.  read live update file; IF not yet available: RETURN
+
+  7.  IF a new generation is available:
+          update HUD with current generation number and best lap time
+          redraw racing line overlay on the track
+
+  8.  IF status == "complete": stop timer; call ON_AI_COMPLETE()
+
+────────────────────────────────────────────────────────────────────────────────
+
+ON_AI_COMPLETE():
+
+  9.  load final driving commands from output file
+
+  10. spawn car; assign AI waypoints, target speeds, and headings
+
+  11. EVERY PHYSICS FRAME:
+          advance to next waypoint when car is close enough
+          set throttle to match target speed (accelerate, coast, or brake)
+          steer toward lookahead point via pure-pursuit
+          // AI inputs enter the same physics pipeline as manual driving
+
+================================================================================
